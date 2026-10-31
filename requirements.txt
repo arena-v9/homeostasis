@@ -1,0 +1,21 @@
+torch
+
+# From the notebook's setup cell
+wandb>=0.18
+einops
+gymnasium[atari,other]>=1.2,<2
+ale-py>=0.10
+pygame
+jaxtyping
+
+# Used directly by the PPO files / ARENA helper modules
+numpy
+matplotlib
+plotly
+pandas
+tqdm
+ipython
+
+# MuJoCo bonus section (BraxEnvs)
+brax==0.14.2
+mujoco
