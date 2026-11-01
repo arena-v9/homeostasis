@@ -90,7 +90,8 @@ h2 { margin: 14px 0 0; font-size: 1.05rem; }
 </div>
 
 <script>
-// Reads runs.json (the list of runs) and, for the chosen run, runs/<name>/run.json, curves.json and replay.json.
+// Reads outputs/runs.json (the list of runs) and, for the chosen run, outputs/runs/<name>/run.json, curves.json and
+// replay.json.
 // See run_outputs.py and replay_viewer.py for their layouts. The chosen run is kept in the address (#<run name>).
 const $ = (id) => document.getElementById(id);
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -111,7 +112,7 @@ async function loadRun(name) {
   current = name;
   $("run").value = name;
   try {
-    const base = `runs/${encodeURIComponent(name)}/`;
+    const base = `outputs/runs/${encodeURIComponent(name)}/`;
     const [info, curves, replay] = await Promise.all(["run", "curves", "replay"].map((f) => getJson(base + f + ".json")));
     if (current !== name) return;  // another run was picked while this one loaded
     $("load-msg").hidden = true;
@@ -173,7 +174,7 @@ function drawCharts(curves) {
   }
 }
 
-getJson("runs.json")
+getJson("outputs/runs.json")
   .then((runs) => {
     RUNS = runs;
     if (!runs.length) return showError("No runs yet. Train one with train_gridworld_solo.py.");
@@ -183,7 +184,7 @@ getJson("runs.json")
     loadRun(runs.some((r) => r.name === wanted) ? wanted : runs[0].name);
   })
   .catch((err) => showError(`Couldn't load the list of runs (${err.message}). Pages opened straight from disk can't ` +
-    "load files: serve the outputs folder with `python -m http.server 8000` and open http://localhost:8000/."));
+    "load files: serve the ui folder (`cd ui && python -m http.server 8000`) and open http://localhost:8000/."));
 $("run").onchange = (e) => { location.hash = encodeURIComponent(e.target.value); };
 window.addEventListener("hashchange", () => {
   const name = decodeURIComponent(location.hash.slice(1));

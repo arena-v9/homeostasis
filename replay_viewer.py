@@ -1,5 +1,5 @@
 """
-Records gridworld episodes for the replay part of the viewer (viewer.html), in the layout saved as a run's
+Records gridworld episodes for the replay part of the viewer (ui/index.html), in the layout saved as a run's
 replay.json (see run_outputs.py):
 
     episodes = record_episodes(act_fn, config, seeds=range(16), device="cpu")

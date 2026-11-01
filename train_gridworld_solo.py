@@ -5,12 +5,12 @@ survive: eat to keep its energy up and stay off fire.
 Every `--eval-every` training steps it evaluates the greedy policy on the same 64 fixed layouts (one 100-step
 episode each) and records survival rate, return, steps on fire and food eaten. It also records 16 full episodes
 before training and at 25/50/75/100% of training. At the end it compares against a random policy and saves the run
-as JSON in its own folder, outputs/runs/solo_seed<seed>_<steps>k_<date-time>/ (see run_outputs.py):
+as JSON in its own folder, ui/outputs/runs/solo_seed<seed>_<steps>k_<date-time>/ (see run_outputs.py):
     run.json      settings and final results
     curves.json   the evaluations over training
     replay.json   the recorded episodes
 
-To look at it: cd outputs && python -m http.server 8000, then open http://localhost:8000/ and pick the run.
+To look at it: cd ui && python -m http.server 8000, then open http://localhost:8000/ and pick the run.
 
 Usage: python train_gridworld_solo.py [--timesteps 200000] [--seed 1] [--wandb]
 """
@@ -134,7 +134,7 @@ def main():
     run_dir = new_run_dir(f"solo_seed{cli.seed}_{cli.timesteps // 1000}k")
     write_json(run_dir / "curves.json", {"metrics": METRICS, "random": random_baseline, "history": history})
     write_json(run_dir / "replay.json", replay_data(replays))
-    viewer = register_run(run_dir, {
+    register_run(run_dir, {
         "created": datetime.now().isoformat(timespec="seconds"),
         "title": f"Solo, seed {cli.seed}, {trainer.agent.step:,} env steps",
         "summary": (f"The DQN agent alone in the gridworld (no NPC), trained for {trainer.agent.step:,} environment "
@@ -147,7 +147,7 @@ def main():
         "args": {k: str(v) if k == "device" else v for k, v in vars(args).items()},
         "config": config_dict(CONFIG),
     })
-    print(f"saved {run_dir}; view all runs with: cd {viewer.parent} && python -m http.server 8000")
+    print(f"saved {run_dir}; view all runs with: cd ui && python -m http.server 8000, then open http://localhost:8000/")
 
 
 if __name__ == "__main__":
