@@ -1,376 +1,163 @@
 <title>__TITLE__</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
-/* Layout: a lab instrument panel. The grid is the specimen on the left; readouts and the timeline sit beside and below it. */
+/* All recorded episodes play side by side, like the training videos: each cell is one episode, with the agent's
+   health (red) and energy (yellow) bars above its grid. Bars jump once per step, with no animation. */
 :root {
-  --bg: #f3f5f4; --panel: #ffffff; --ink: #18211e; --muted: #5f6b67; --line: #d9dfdc;
-  --accent: #2456c9;
-  --wall: #6f7975; --floor: #ffffff; --floor-line: #e3e8e6; --fire: #f07a1a; --food: #2f9e5b;
-  --agent: #2456c9; --npc: #8a3fc4; --health: #d43a3a; --energy: #d9a400;
-  --good: #23824c; --bad: #c43535;
-  --font-body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-data: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --bg: #ffffff; --ink: #1d2320; --muted: #66706c; --line: #dde2e0; --cell: #fafbfb;
+  --wall: #6e6e6e; --floor: #ffffff; --grid: #e1e1e1; --fire: #ff7800; --food: #3cb44b;
+  --agent: #285adc; --npc: #963cc8; --health: #dc2828; --energy: #e6be00; --track: #e6e6e6;
+  --died: #c43535; --ok: #23824c;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #121715; --panel: #1a211e; --ink: #e6ece9; --muted: #95a39d; --line: #2c3632;
-  --accent: #7ea2ff;
-  --wall: #4d5753; --floor: #222a27; --floor-line: #2f3935; --fire: #ff8c33; --food: #3fbf73;
-  --agent: #6f98ff; --npc: #c07af0; --health: #ff6262; --energy: #ffcc33;
-  --good: #4fca82; --bad: #ff6b6b; color-scheme: dark;
+  --bg: #141816; --ink: #e6ece9; --muted: #98a49f; --line: #2c3532; --cell: #1b201e;
+  --wall: #555b58; --floor: #262c29; --grid: #323a36; --fire: #ff8c33; --food: #46c25a;
+  --agent: #6f98ff; --npc: #c07af0; --health: #ff5c5c; --energy: #ffd23f; --track: #333b37;
+  --died: #ff6b6b; --ok: #4fca82; color-scheme: dark;
 } }
 :root[data-theme="dark"] {
-  --bg: #121715; --panel: #1a211e; --ink: #e6ece9; --muted: #95a39d; --line: #2c3632;
-  --accent: #7ea2ff;
-  --wall: #4d5753; --floor: #222a27; --floor-line: #2f3935; --fire: #ff8c33; --food: #3fbf73;
-  --agent: #6f98ff; --npc: #c07af0; --health: #ff6262; --energy: #ffcc33;
-  --good: #4fca82; --bad: #ff6b6b; color-scheme: dark;
+  --bg: #141816; --ink: #e6ece9; --muted: #98a49f; --line: #2c3532; --cell: #1b201e;
+  --wall: #555b58; --floor: #262c29; --grid: #323a36; --fire: #ff8c33; --food: #46c25a;
+  --agent: #6f98ff; --npc: #c07af0; --health: #ff5c5c; --energy: #ffd23f; --track: #333b37;
+  --died: #ff6b6b; --ok: #4fca82; color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.45; }
-.wrap { max-width: 1040px; margin: 0 auto; padding-block: 24px 40px;
+body { background: var(--bg); color: var(--ink); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px; }
+.wrap { max-width: 760px; margin: 0 auto; padding-block: 20px 32px;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
-  display: flex; flex-direction: column; gap: 18px; }
-header h1 { margin: 0; font-size: 1.6rem; font-weight: 700; text-wrap: balance; letter-spacing: -0.01em; }
-header p { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
-.label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
-.row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
-select, button { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
-  border-radius: 6px; padding: 6px 10px; cursor: pointer; }
-button:hover, select:hover { border-color: var(--accent); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.episodes { display: flex; flex-wrap: wrap; gap: 6px; }
-.ep { font-family: var(--font-data); font-size: 0.8rem; min-width: 2.6rem; padding: 4px 6px; display: inline-flex;
-  align-items: center; gap: 5px; justify-content: center; }
-.ep .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
-.ep.died .dot { background: var(--bad); }
-.ep[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 300px); gap: 18px; align-items: start; }
-@media (max-width: 760px) { .main { grid-template-columns: minmax(0, 1fr); } }
-.stage { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
-  display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-canvas#grid { width: 100%; max-width: 520px; aspect-ratio: 1; align-self: center; display: block; }
-.transport { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.transport input[type=range] { flex: 1 1 160px; min-width: 0; accent-color: var(--accent); }
-.readout { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.stat { display: grid; grid-template-columns: 5.5rem 1fr 3.4rem; gap: 2px 8px; align-items: center; }
-/* Bars jump once per step (no animation), and the part lost or gained on this step is drawn in its cause's colour */
-.bar { position: relative; height: 12px; background: var(--line); border-radius: 3px; overflow: hidden; }
-.bar > i, .bar > b { position: absolute; top: 0; bottom: 0; left: 0; width: 0; }
-.bar > b { opacity: 0.55; }
-.delta { grid-column: 2 / 4; font-family: var(--font-data); font-size: 0.78rem; color: var(--muted); min-height: 1.2em;
-  display: flex; flex-wrap: wrap; gap: 0 10px; }
-.delta .fire { color: var(--fire); font-weight: 600; } .delta .food { color: var(--food); font-weight: 600; }
-.delta .starve { color: var(--bad); font-weight: 600; }
-.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; text-align: right; font-size: 0.9rem; }
-dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; }
-dt { color: var(--muted); }
-dd { margin: 0; font-family: var(--font-data); font-variant-numeric: tabular-nums; text-align: right; }
-.event { font-family: var(--font-data); font-size: 0.85rem; min-height: 1.4em; }
-.event.bad { color: var(--bad); } .event.good { color: var(--good); }
-canvas#timeline { width: 100%; height: 120px; display: block; cursor: pointer; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.85rem; color: var(--muted); }
-.legend span { display: inline-flex; align-items: center; gap: 6px; }
-.legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-.legend i.round { border-radius: 50%; }
-.keys { font-size: 0.8rem; color: var(--muted); }
-kbd { font-family: var(--font-data); font-size: 0.75rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--panel); }
+  display: flex; flex-direction: column; gap: 12px; }
+h1 { margin: 0; font-size: 1.3rem; text-wrap: balance; }
+.sub { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.45; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.controls input[type=range] { flex: 1 1 180px; min-width: 0; accent-color: var(--agent); }
+select, button { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+button { min-width: 4.5rem; }
+.num { font-variant-numeric: tabular-nums; color: var(--muted); }
+canvas { width: 100%; max-width: 100%; aspect-ratio: 4 / 3; display: block; border: 1px solid var(--line); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 0.85rem; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 11px; height: 11px; display: inline-block; }
 </style>
 
 <div class="wrap">
-  <header>
-    <h1 id="title"></h1>
-    <p id="subtitle"></p>
-  </header>
-
-  <div class="row">
-    <label class="row" for="checkpoint"><span class="label">Training stage</span>
-      <select id="checkpoint"></select></label>
-    <span id="summary" class="num" style="text-align:left"></span>
+  <h1 id="title"></h1>
+  <p id="subtitle" class="sub"></p>
+  <div class="controls">
+    <select id="checkpoint" aria-label="Training stage"></select>
+    <button id="play">Play</button>
+    <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Step">
+    <span id="step" class="num"></span>
+    <select id="speed" aria-label="Playback speed">
+      <option value="2">slow</option><option value="6" selected>normal</option><option value="20">fast</option>
+    </select>
   </div>
-
-  <div class="row" style="align-items:flex-start">
-    <span class="label" style="padding-top:6px">Episode</span>
-    <div id="episodes" class="episodes" role="group" aria-label="Episodes"></div>
+  <span id="summary" class="num"></span>
+  <canvas id="view" aria-label="All episodes at the current step"></canvas>
+  <div class="legend">
+    <span><i style="background:var(--health)"></i>Health</span>
+    <span><i style="background:var(--energy)"></i>Energy</span>
+    <span><i style="background:var(--agent);border-radius:50%"></i>Agent</span>
+    <span><i style="background:var(--npc);border-radius:50%"></i>NPC</span>
+    <span><i style="background:var(--food)"></i>Food</span>
+    <span><i style="background:var(--fire)"></i>Fire</span>
+    <span><i style="background:var(--wall)"></i>Wall</span>
   </div>
-
-  <div class="main">
-    <section class="stage">
-      <canvas id="grid" width="560" height="560" aria-label="Gridworld at the current step"></canvas>
-      <div class="transport">
-        <button id="prev" aria-label="Previous step">&#9664;</button>
-        <button id="play" aria-label="Play">Play</button>
-        <button id="next" aria-label="Next step">&#9654;</button>
-        <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Step">
-        <select id="speed" aria-label="Playback speed">
-          <option value="2">2 steps/s</option><option value="5" selected>5 steps/s</option>
-          <option value="10">10 steps/s</option><option value="25">25 steps/s</option>
-        </select>
-      </div>
-      <div class="legend">
-        <span><i style="background:var(--agent)" class="round"></i>Agent</span>
-        <span><i style="background:var(--npc)" class="round"></i>NPC</span>
-        <span><i style="background:var(--food)"></i>Food</span>
-        <span><i style="background:var(--fire)"></i>Fire</span>
-        <span><i style="background:var(--wall)"></i>Wall</span>
-      </div>
-    </section>
-
-    <aside class="readout stage">
-      <div class="row" style="justify-content:space-between">
-        <span class="label">Step</span><span id="step" class="num"></span>
-      </div>
-      <div class="stat"><span>Health</span><div class="bar"><i id="h-fill" style="background:var(--health)"></i><b id="h-ghost"></b></div><span id="h-val" class="num"></span><div id="h-delta" class="delta"></div></div>
-      <div class="stat"><span>Energy</span><div class="bar"><i id="e-fill" style="background:var(--energy)"></i><b id="e-ghost"></b></div><span id="e-val" class="num"></span><div id="e-delta" class="delta"></div></div>
-      <div id="npcstats" class="readout" hidden>
-        <div class="stat"><span>NPC health</span><div class="bar"><i id="nh-fill" style="background:var(--health)"></i><b id="nh-ghost"></b></div><span id="nh-val" class="num"></span><div id="nh-delta" class="delta"></div></div>
-        <div class="stat"><span>NPC energy</span><div class="bar"><i id="ne-fill" style="background:var(--energy)"></i><b id="ne-ghost"></b></div><span id="ne-val" class="num"></span><div id="ne-delta" class="delta"></div></div>
-      </div>
-      <dl>
-        <dt>Next action</dt><dd id="action"></dd>
-        <dt>Reward</dt><dd id="reward"></dd>
-        <dt>Return so far</dt><dd id="ret"></dd>
-        <dt>Outcome</dt><dd id="outcome"></dd>
-        <dt>Food eaten</dt><dd id="food"></dd>
-        <dt>Steps on fire</dt><dd id="fire"></dd>
-      </dl>
-      <div id="event" class="event" aria-live="polite"></div>
-      <p class="keys"><kbd>Space</kbd> play/pause &middot; <kbd>&larr;</kbd> <kbd>&rarr;</kbd> step &middot; <kbd>[</kbd> <kbd>]</kbd> episode</p>
-    </aside>
-  </div>
-
-  <section class="stage">
-    <span class="label">Health and energy over the episode (click to jump)</span>
-    <canvas id="timeline" aria-label="Health and energy over the episode"></canvas>
-  </section>
 </div>
 
 <script>
 const DATA = __DATA__;
 const T = DATA.tiles;
 const $ = (id) => document.getElementById(id);
-let cp = 0, epIdx = 0, frame = 0, timer = null;
-
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const episode = () => DATA.checkpoints[cp].episodes[epIdx];
+let cp = DATA.checkpoints.length - 1, frame = 0, timer = null;
 
 $("title").textContent = DATA.title;
 $("subtitle").textContent = DATA.subtitle;
 DATA.checkpoints.forEach((c, i) => $("checkpoint").add(new Option(c.label, i)));
+$("checkpoint").value = cp;
 
-function renderEpisodeButtons() {
-  const box = $("episodes");
-  box.replaceChildren();
-  DATA.checkpoints[cp].episodes.forEach((ep, i) => {
-    const b = document.createElement("button");
-    b.className = "ep" + (ep.outcome === "died" ? " died" : "");
-    b.setAttribute("aria-pressed", i === epIdx);
-    b.title = `${ep.outcome}, return ${ep.return}`;
-    b.innerHTML = `<span class="dot"></span>${i + 1}`;
-    b.onclick = () => selectEpisode(i);
-    box.append(b);
+const episodes = () => DATA.checkpoints[cp].episodes;
+const longest = () => Math.max(...episodes().map((e) => e.frames.length)) - 1;
+
+// One cell: two bars on top, then the grid. An episode that has ended stays on its last frame with a label.
+function drawCell(ctx, ep, x0, y0, w, h, c) {
+  const last = ep.frames.length - 1, f = ep.frames[Math.min(frame, last)], ended = frame >= last;
+  const barH = Math.round(h * 0.07), gap = 3;
+  [[f.h, c.health], [f.e, c.energy]].forEach(([v, col], k) => {
+    const y = y0 + 4 + k * (barH + gap);
+    ctx.fillStyle = c.track; ctx.fillRect(x0 + 4, y, w - 8, barH);
+    ctx.fillStyle = col; ctx.fillRect(x0 + 4, y, (w - 8) * Math.max(0, Math.min(1, v)), barH);
   });
-  const eps = DATA.checkpoints[cp].episodes;
-  const survived = eps.filter((e) => e.outcome === "survived").length;
-  const meanRet = eps.reduce((s, e) => s + e.return, 0) / eps.length;
-  $("summary").textContent = `${survived}/${eps.length} survived · mean return ${meanRet.toFixed(1)}`;
-}
-
-function selectEpisode(i) {
-  epIdx = i; frame = 0;
-  renderEpisodeButtons();
-  $("scrub").max = episode().frames.length - 1;
-  draw();
-}
-
-function drawGrid(ep, f) {
-  const cv = $("grid"), ctx = cv.getContext("2d");
-  const n = ep.tiles.length, sq = cv.width / n;
-  ctx.clearRect(0, 0, cv.width, cv.height);
-  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
-    const tile = ep.tiles[r][c];
-    ctx.fillStyle = tile === T.wall ? css("--wall") : tile === T.fire ? css("--fire") : css("--floor");
-    ctx.fillRect(c * sq, r * sq, sq, sq);
-    ctx.strokeStyle = css("--floor-line"); ctx.lineWidth = 1;
-    ctx.strokeRect(c * sq + 0.5, r * sq + 0.5, sq - 1, sq - 1);
-    if (tile === T.fire) {  // flame mark so fire reads without colour
-      ctx.fillStyle = "rgba(255,255,255,0.55)";
-      ctx.beginPath(); ctx.moveTo(c * sq + sq * 0.5, r * sq + sq * 0.25);
-      ctx.quadraticCurveTo(c * sq + sq * 0.72, r * sq + sq * 0.55, c * sq + sq * 0.5, r * sq + sq * 0.75);
-      ctx.quadraticCurveTo(c * sq + sq * 0.28, r * sq + sq * 0.55, c * sq + sq * 0.5, r * sq + sq * 0.25); ctx.fill();
-    }
+  const top = y0 + 4 + 2 * (barH + gap) + 2, n = ep.tiles.length;
+  const sq = Math.floor(Math.min(w - 8, y0 + h - 4 - top) / n), gx = x0 + (w - sq * n) / 2;
+  for (let r = 0; r < n; r++) for (let col = 0; col < n; col++) {
+    const tile = ep.tiles[r][col];
+    ctx.fillStyle = tile === T.wall ? c.wall : tile === T.fire ? c.fire : c.floor;
+    ctx.fillRect(gx + col * sq, top + r * sq, sq, sq);
+    ctx.strokeStyle = c.grid; ctx.strokeRect(gx + col * sq + 0.5, top + r * sq + 0.5, sq - 1, sq - 1);
   }
-  for (const [r, c] of f.food) {
-    ctx.fillStyle = css("--food");
-    const m = sq * 0.22; ctx.beginPath();
-    ctx.roundRect(c * sq + m, r * sq + m, sq - 2 * m, sq - 2 * m, sq * 0.12); ctx.fill();
-  }
-  const body = (r, c, color, h, e) => {
-    const cx = c * sq + sq / 2, cy = r * sq + sq / 2;
-    if (ep.tiles[r][c] === T.fire) {  // ring: this body is taking fire damage this step
-      ctx.strokeStyle = css("--fire"); ctx.lineWidth = Math.max(3, sq * 0.08);
-      ctx.beginPath(); ctx.arc(cx, cy, sq * 0.4, 0, Math.PI * 2); ctx.stroke();
-      ctx.strokeStyle = css("--panel"); ctx.lineWidth = Math.max(1, sq * 0.025);
-      ctx.beginPath(); ctx.arc(cx, cy, sq * 0.34, 0, Math.PI * 2); ctx.stroke();
-    }
-    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx, cy, sq * 0.3, 0, Math.PI * 2); ctx.fill();
-    const w = sq * 0.7, x = cx - w / 2, bh = Math.max(3, sq * 0.06);  // mini health/energy bars under the body
-    [[h, css("--health")], [e, css("--energy")]].forEach(([v, col], k) => {
-      const y = r * sq + sq * 0.84 + k * (bh + 2) - bh;
-      ctx.fillStyle = css("--floor-line"); ctx.fillRect(x, y, w, bh);
-      ctx.fillStyle = col; ctx.fillRect(x, y, w * v, bh);
-    });
+  for (const [r, col] of f.food) { ctx.fillStyle = c.food; ctx.fillRect(gx + col * sq, top + r * sq, sq, sq); }
+  const body = (r, col, color) => {
+    ctx.fillStyle = color; ctx.beginPath();
+    ctx.arc(gx + col * sq + sq / 2, top + r * sq + sq / 2, sq / 3, 0, Math.PI * 2); ctx.fill();
   };
-  if (f.npc) body(f.npc[0], f.npc[1], css("--npc"), f.npc[2], f.npc[3]);
-  body(f.agent[0], f.agent[1], css("--agent"), f.h, f.e);
-}
-
-function drawTimeline(ep) {
-  const cv = $("timeline"), dpr = window.devicePixelRatio || 1;
-  const w = cv.clientWidth, h = cv.clientHeight;
-  cv.width = w * dpr; cv.height = h * dpr;
-  const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
-  const pad = { l: 30, r: 8, t: 8, b: 18 }, n = ep.frames.length;
-  const X = (i) => pad.l + (w - pad.l - pad.r) * (i / Math.max(n - 1, 1));
-  const Y = (v) => pad.t + (h - pad.t - pad.b) * (1 - v);
-  ctx.strokeStyle = css("--line"); ctx.fillStyle = css("--muted"); ctx.font = `11px ${css("--font-data")}`;
-  ctx.lineWidth = 1;
-  for (const v of [0, 0.5, 1]) {
-    ctx.beginPath(); ctx.moveTo(pad.l, Y(v)); ctx.lineTo(w - pad.r, Y(v)); ctx.stroke();
-    ctx.fillText(v.toFixed(1), 2, Y(v) + 4);
+  if (f.npc) body(f.npc[0], f.npc[1], c.npc);
+  body(f.agent[0], f.agent[1], c.agent);
+  if (ended) {
+    const died = ep.outcome === "died";
+    const text = died ? `died at step ${last}` : ep.outcome;
+    ctx.font = `600 ${Math.max(11, Math.round(sq * 0.55))}px system-ui, sans-serif`;
+    const tw = ctx.measureText(text).width, ty = top + (sq * n) / 2;
+    ctx.fillStyle = c.bg; ctx.globalAlpha = 0.85;
+    ctx.fillRect(x0 + (w - tw) / 2 - 6, ty - sq * 0.45, tw + 12, sq * 0.9); ctx.globalAlpha = 1;
+    ctx.fillStyle = died ? c.died : c.ok; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(text, x0 + w / 2, ty); ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
   }
-  ctx.fillText("0", pad.l, h - 4);
-  const last = String(n - 1); ctx.fillText(last, w - pad.r - ctx.measureText(last).width, h - 4);
-  ep.frames.forEach((f, i) => {  // shade steps on fire
-    if (ep.tiles[f.agent[0]][f.agent[1]] === T.fire) {
-      ctx.fillStyle = css("--fire"); ctx.globalAlpha = 0.18;
-      ctx.fillRect(X(i) - 2, pad.t, 4, h - pad.t - pad.b); ctx.globalAlpha = 1;
-    }
-  });
-  ep.frames.forEach((f, i) => {  // mark meals along the top edge
-    if (i > 0 && f.e > ep.frames[i - 1].e) {
-      ctx.fillStyle = css("--food"); ctx.beginPath(); ctx.arc(X(i), pad.t + 4, 4, 0, Math.PI * 2); ctx.fill();
-    }
-  });
-  for (const [key, col] of [["h", "--health"], ["e", "--energy"]]) {
-    // Drawn as steps: each value holds for a whole step, then jumps
-    ctx.strokeStyle = css(col); ctx.lineWidth = 2; ctx.beginPath();
-    ep.frames.forEach((f, i) => {
-      if (i === 0) return ctx.moveTo(X(0), Y(f[key]));
-      ctx.lineTo(X(i), Y(ep.frames[i - 1][key]));
-      ctx.lineTo(X(i), Y(f[key]));
-    });
-    ctx.stroke();
-  }
-  ctx.strokeStyle = css("--accent"); ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(X(frame), pad.t); ctx.lineTo(X(frame), h - pad.b); ctx.stroke();
-  cv.onclick = (ev) => {
-    const rect = cv.getBoundingClientRect();
-    const i = Math.round(((ev.clientX - rect.left - pad.l) / (w - pad.l - pad.r)) * (n - 1));
-    frame = Math.min(n - 1, Math.max(0, i)); draw();
-  };
-}
-
-const pct = (v) => `${(Math.max(0, Math.min(1, v)) * 100).toFixed(1)}%`;
-const signed = (d) => (d > 0 ? "+" : d < 0 ? "−" : "±") + Math.abs(d).toFixed(2);
-
-// Sets one bar for this step. `prev` is the value one step earlier (null on the first frame); `cause` names what
-// changed it ({label, cls, color}). The changed part is drawn as a translucent segment in the cause's colour.
-function setBar(key, v, prev, cause) {
-  const fill = $(`${key}-fill`), ghost = $(`${key}-ghost`);
-  $(`${key}-val`).textContent = v.toFixed(2);
-  const d = prev === null ? 0 : v - prev;
-  const lo = Math.min(v, prev ?? v), hi = Math.max(v, prev ?? v);
-  fill.style.width = pct(lo);
-  ghost.style.left = pct(lo);
-  ghost.style.width = pct(hi - lo);
-  // Gains from food show green; regen shows in the bar's own colour; losses show the cause (orange fire, grey hunger)
-  ghost.style.background = cause.cls ? cause.color : d > 0 ? fill.style.background : cause.color;
-  $(`${key}-delta`).innerHTML = prev === null ? "start"
-    : Math.abs(d) < 1e-9 ? `${signed(0)} ${cause.idle}`
-    : `<span class="${cause.cls}">${signed(d)} ${cause.label}</span>`;
-}
-
-// What changed health and energy between two frames, for one body. Health drops on fire or while starving (energy
-// at 0), and otherwise regenerates; energy only rises by eating (and otherwise falls by hunger).
-function healthCause(onFire, d) {
-  if (onFire) return { label: "fire", cls: "fire", color: css("--fire"), idle: "" };
-  if (d < 0) return { label: "starving", cls: "starve", color: css("--energy"), idle: "" };
-  return { label: "regen", cls: "", color: css("--muted"), idle: "full" };
-}
-function energyCause(d) {
-  if (d > 0) return { label: "food", cls: "food", color: css("--food"), idle: "" };
-  return { label: "hunger", cls: "", color: css("--muted"), idle: "" };
 }
 
 function draw() {
-  const ep = episode(), f = ep.frames[frame], last = ep.frames.length - 1;
-  drawGrid(ep, f);
-  drawTimeline(ep);
-  $("scrub").value = frame;
-  $("step").textContent = `${frame} / ${last}`;
-  const prevF = frame > 0 ? ep.frames[frame - 1] : null;
-  const isFire = (r, c) => ep.tiles[r][c] === T.fire;
-  setBar("h", f.h, prevF ? prevF.h : null, healthCause(isFire(f.agent[0], f.agent[1]), prevF ? f.h - prevF.h : 0));
-  setBar("e", f.e, prevF ? prevF.e : null, energyCause(prevF ? f.e - prevF.e : 0));
-  $("npcstats").hidden = !f.npc;
-  if (f.npc) {
-    const pn = prevF && prevF.npc ? prevF.npc : null;
-    setBar("nh", f.npc[2], pn ? pn[2] : null, healthCause(isFire(f.npc[0], f.npc[1]), pn ? f.npc[2] - pn[2] : 0));
-    setBar("ne", f.npc[3], pn ? pn[3] : null, energyCause(pn ? f.npc[3] - pn[3] : 0));
-  }
-  $("action").textContent = f.a ?? "none";
-  $("reward").textContent = f.r !== undefined ? f.r.toFixed(2) : "none";
-  const ret = ep.frames.slice(0, frame).reduce((s, x) => s + (x.r ?? 0), 0);
-  $("ret").textContent = ret.toFixed(2);
-  $("outcome").textContent = ep.outcome === "died" ? `died at step ${last}` : ep.outcome;
-  $("food").textContent = ep.food_eaten;
-  $("fire").textContent = ep.fire_steps;
-
-  let msg = "", cls = "";
-  const prev = frame > 0 ? ep.frames[frame - 1] : null;
-  if (prev && f.e > prev.e) { msg = "Ate food (+0.5 energy)"; cls = "good"; }
-  if (f.e <= 0) { msg = "Starving: energy is empty, so health drains each step"; cls = "bad"; }
-  if (ep.tiles[f.agent[0]][f.agent[1]] === T.fire) { msg = "Standing on fire (-0.3 health per step)"; cls = "bad"; }
-  if (frame === last && ep.outcome === "died") {
-    msg = ep.tiles[f.agent[0]][f.agent[1]] === T.fire ? "Died: burned on fire" : "Died: starved"; cls = "bad";
-  }
-  if (frame === last && ep.outcome === "survived") { msg = "Survived all steps"; cls = "good"; }
-  $("event").textContent = msg; $("event").className = "event " + cls;
+  const cv = $("view"), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
+  const c = Object.fromEntries(["bg", "cell", "line", "wall", "floor", "grid", "fire", "food", "agent", "npc",
+    "health", "energy", "track", "died", "ok"].map((k) => [k, css(`--${k}`)]));
+  ctx.fillStyle = c.bg; ctx.fillRect(0, 0, W, H);
+  const eps = episodes(), cols = Math.ceil(Math.sqrt(eps.length)), rows = Math.ceil(eps.length / cols);
+  const cw = W / cols, ch = H / rows;
+  eps.forEach((ep, i) => {
+    const x = (i % cols) * cw, y = Math.floor(i / cols) * ch;
+    ctx.fillStyle = c.cell; ctx.fillRect(x, y, cw, ch);
+    ctx.strokeStyle = c.line; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, cw - 1, ch - 1);
+    drawCell(ctx, ep, x, y, cw, ch, c);
+  });
+  $("scrub").max = longest(); $("scrub").value = frame;
+  $("step").textContent = `step ${frame} / ${longest()}`;
+  const survived = eps.filter((e) => e.outcome === "survived").length;
+  $("summary").textContent = `${survived} of ${eps.length} episodes survived`;
 }
 
 function setPlaying(on) {
   clearInterval(timer); timer = null;
   $("play").textContent = on ? "Pause" : "Play";
-  $("play").setAttribute("aria-label", on ? "Pause" : "Play");
   if (!on) return;
-  if (frame >= episode().frames.length - 1) frame = 0;
-  timer = setInterval(() => {
-    if (frame >= episode().frames.length - 1) return setPlaying(false);
-    frame++; draw();
-  }, 1000 / Number($("speed").value));
+  if (frame >= longest()) frame = 0;
+  timer = setInterval(() => { if (frame >= longest()) return setPlaying(false); frame++; draw(); },
+    1000 / Number($("speed").value));
 }
 
-$("checkpoint").onchange = (e) => { cp = Number(e.target.value); selectEpisode(Math.min(epIdx, DATA.checkpoints[cp].episodes.length - 1)); };
+$("checkpoint").onchange = (e) => { cp = Number(e.target.value); frame = 0; setPlaying(false); draw(); };
 $("play").onclick = () => setPlaying(!timer);
-$("prev").onclick = () => { setPlaying(false); frame = Math.max(0, frame - 1); draw(); };
-$("next").onclick = () => { setPlaying(false); frame = Math.min(episode().frames.length - 1, frame + 1); draw(); };
 $("scrub").oninput = (e) => { setPlaying(false); frame = Number(e.target.value); draw(); };
 $("speed").onchange = () => { if (timer) setPlaying(true); };
 document.addEventListener("keydown", (e) => {
-  if (["INPUT", "SELECT"].includes(document.activeElement.tagName) && e.key !== " ") return;
-  if (e.key === " ") { e.preventDefault(); setPlaying(!timer); }
-  else if (e.key === "ArrowRight") $("next").click();
-  else if (e.key === "ArrowLeft") $("prev").click();
-  else if (e.key === "]") selectEpisode(Math.min(epIdx + 1, DATA.checkpoints[cp].episodes.length - 1));
-  else if (e.key === "[") selectEpisode(Math.max(epIdx - 1, 0));
+  if (e.key === " " && document.activeElement.tagName !== "SELECT") { e.preventDefault(); setPlaying(!timer); }
+  else if (e.key === "ArrowRight") { setPlaying(false); frame = Math.min(longest(), frame + 1); draw(); }
+  else if (e.key === "ArrowLeft") { setPlaying(false); frame = Math.max(0, frame - 1); draw(); }
 });
-window.addEventListener("resize", () => drawTimeline(episode()));
+window.addEventListener("resize", draw);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
 new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-
-$("checkpoint").value = DATA.checkpoints.length - 1; cp = DATA.checkpoints.length - 1;
-selectEpisode(0);
+draw();
 </script>

@@ -1,7 +1,7 @@
 """
 Records gridworld episodes and writes them to a self-contained HTML replay page (built from the template in
-replay_viewer.html): open it in any browser to play, pause and step through each episode and see the grid, both
-bodies, health, energy, food and events.
+replay_viewer.html): open it in any browser to play all recorded episodes side by side, each with the agent's
+health and energy bars above its grid, and switch between training stages.
 
     episodes = record_episodes(act_fn, config, seeds=range(16), device="cpu")
     write_replay_html({"after 200k steps": episodes}, "outputs/replay.html")
