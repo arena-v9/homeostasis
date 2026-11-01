@@ -1,17 +1,27 @@
 """
-Records gridworld episodes and writes them to a self-contained HTML replay page (built from the template in
-replay_viewer.html): open it in any browser to play all recorded episodes side by side, each with the agent's
-health and energy bars above its grid, and switch between training stages.
+Records gridworld episodes for the replay part of the viewer (viewer.html), in the layout saved as a run's
+replay.json (see run_outputs.py):
 
     episodes = record_episodes(act_fn, config, seeds=range(16), device="cpu")
-    write_replay_html({"after 200k steps": episodes}, "outputs/replay.html")
+    data = replay_data({"untrained": ..., "after 200k steps": episodes})
+
+The layout:
+
+    tiles                     tile name -> the number used in each episode's `tiles` grid
+    checkpoints[]             one per training stage
+      label
+      episodes[]              one per layout seed
+        seed, outcome ("survived", "died" or "discarded push"), return, fire_steps, food_eaten
+        tiles                 the map, rows of tile numbers
+        frames[]              one per step, starting with the initial state
+          agent, npc          {"pos": [row, col], "health", "energy"}; npc is null when there is no living NPC
+          food                [row, col] of each food item
+          action, reward      what the agent did from this state and the reward it got (absent on the last frame)
 
 `record_episodes` runs the single-env mechanics (gridworld.step) directly, so it records the true states, including
 the final state of an episode that ends in death.
 """
 
-import json
-from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -21,19 +31,17 @@ from batched_gridworld import NpcPolicy, npc_stays
 from gridworld import Action, observe, step
 from gridworld_config import GridworldConfig, Tile
 from gridworld_layout import random_state
-from gridworld_state import GridworldState
+from gridworld_state import Body, GridworldState
 
-# The page itself; `write_replay_html` fills in __TITLE__ and __DATA__ (the recorded episodes as JSON)
-TEMPLATE_PATH = Path(__file__).with_name("replay_viewer.html")
+
+def _body(body: Body) -> dict:
+    return {"pos": [int(p) for p in body.pos], "health": round(body.health, 4), "energy": round(body.energy, 4)}
 
 
 def _frame(state: GridworldState) -> dict:
-    npc = state.npc
     return {
-        "agent": list(state.agent.pos),
-        "h": round(state.agent.health, 4),
-        "e": round(state.agent.energy, 4),
-        "npc": [*npc.pos, round(npc.health, 4), round(npc.energy, 4)] if npc.alive else None,
+        "agent": _body(state.agent),
+        "npc": _body(state.npc) if state.npc.alive else None,
         "food": [[int(r), int(c)] for r, c in np.argwhere(state.food)],
     }
 
@@ -50,59 +58,48 @@ def record_episodes(
     episodes advance together so the network sees one batch per step). Returns one dict per episode."""
     rngs = [np.random.default_rng(seed) for seed in seeds]
     states = [random_state(config, rng) for rng in rngs]
-    episodes = [
-        {"seed": int(seed), "tiles": state.tiles.tolist(), "frames": [_frame(state)], "fire_steps": 0, "food_eaten": 0}
-        for seed, state in zip(seeds, states)
-    ]
-    done = [False] * len(states)
+    frames = [[_frame(state)] for state in states]
+    fire_steps, food_eaten = [0] * len(states), [0] * len(states)
+    outcomes: list[str | None] = [None] * len(states)
 
     for _ in range(config.max_steps):
-        active = [i for i, d in enumerate(done) if not d]
+        active = [i for i, outcome in enumerate(outcomes) if outcome is None]
         if not active:
             break
         obs = t.from_numpy(np.stack([observe(states[i], config) for i in active])).to(device)
         actions = act_fn(obs).tolist()
         for i, action in zip(active, actions):
             res = step(states[i], Action(action), npc_policy(states[i], rngs[i]), config, rngs[i])
-            ep = episodes[i]
-            ep["frames"][-1].update(a=Action(action).name.lower(), r=round(res.reward, 4))
+            frames[i][-1].update(action=Action(action).name.lower(), reward=round(res.reward, 4))
             if res.discarded:
-                ep["outcome"] = "discarded push"
-                done[i] = True
+                outcomes[i] = "discarded push"
                 continue
-            ep["food_eaten"] += int(res.state.agent.energy > states[i].agent.energy)  # energy only rises by eating
-            ep["fire_steps"] += int(res.agent_on_hazard)
-            ep["frames"].append(_frame(res.state))
+            food_eaten[i] += int(res.state.agent.energy > states[i].agent.energy)  # energy only rises by eating
+            fire_steps[i] += int(res.agent_on_hazard)
+            frames[i].append(_frame(res.state))
             states[i] = res.state
             if res.terminated:
-                ep["outcome"] = "died"
-                done[i] = True
+                outcomes[i] = "died"
             elif res.truncated:
-                ep["outcome"] = "survived"
-                done[i] = True
+                outcomes[i] = "survived"
 
-    for ep in episodes:
-        ep.setdefault("outcome", "survived")
-        ep["return"] = round(sum(f.get("r", 0.0) for f in ep["frames"]), 2)
-    return episodes
+    return [
+        {
+            "seed": int(seed),
+            "outcome": outcomes[i] or "survived",
+            "return": round(sum(f.get("reward", 0.0) for f in frames[i]), 2),
+            "fire_steps": fire_steps[i],
+            "food_eaten": food_eaten[i],
+            "tiles": states[i].tiles.tolist(),
+            "frames": frames[i],
+        }
+        for i, seed in enumerate(seeds)
+    ]
 
 
-def write_replay_html(
-    checkpoints: dict[str, list[dict]],
-    path: str | Path,
-    title: str = "Gridworld Replays",
-    subtitle: str = "",
-) -> Path:
-    """Writes the replay page. `checkpoints` maps a label (e.g. "untrained", "after 100k steps") to the episodes
-    recorded at that point; the page lets you switch between them."""
-    data = {
-        "title": title,
-        "subtitle": subtitle,
-        "tiles": {t.name.lower(): int(t) for t in Tile},
+def replay_data(checkpoints: dict[str, list[dict]]) -> dict:
+    """`checkpoints` maps a label (e.g. "untrained", "after 100k steps") to the episodes recorded at that point."""
+    return {
+        "tiles": {tile.name.lower(): int(tile) for tile in Tile},
         "checkpoints": [{"label": label, "episodes": eps} for label, eps in checkpoints.items()],
     }
-    template = TEMPLATE_PATH.read_text()
-    html = template.replace("__TITLE__", title).replace("__DATA__", json.dumps(data, separators=(",", ":")))
-    path = Path(path)
-    path.write_text(html)
-    return path
