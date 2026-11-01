@@ -8,7 +8,9 @@ from enum import IntEnum
 
 
 class Tile(IntEnum):
-    """What a square of the map is. Food is not a tile: it's an item that sits on a floor tile (see GridworldState)."""
+    """
+    What a square of the map is. Food is not a tile: it's an item that sits on a floor tile (see GridworldState).
+    """
 
     FLOOR = 0
     WALL = 1
@@ -19,9 +21,9 @@ class Tile(IntEnum):
 
 @dataclass(frozen=True)
 class GridworldConfig:
-    # Map: a size x size grid with a wall border, so the playable area is (size - 2) x (size - 2)
-    size: int = 7
-    num_fire: int = 2  # fire tiles placed at random each episode (see envs/gridworld/layout.py)
+    # Map: a grid_size x grid_size grid with a wall border, so the playable area is (grid_size - 2) x (grid_size - 2)
+    grid_size: int = 7
+    num_fire: int = 2  # fire tiles placed at random each episode (see initial_state.py)
     npc_enabled: bool = True  # False = the agent is alone (for checking the environment and the agent's learning)
     start_energy_range: tuple[float, float] = (0.5, 1.0)  # each body's starting energy is uniform in this range
 
@@ -69,9 +71,11 @@ class GridworldConfig:
     discard_harmful_pushes: bool = True
 
     def agent_damage(self, tile: Tile) -> float:
+        """Health the agent loses per step standing on `tile`."""
         return self.hazard_damage.get(Tile(tile), (0.0, 0.0))[0]
 
     def npc_damage(self, tile: Tile) -> float:
+        """Health the NPC loses per step standing on `tile`."""
         return self.hazard_damage.get(Tile(tile), (0.0, 0.0))[1]
 
     @property

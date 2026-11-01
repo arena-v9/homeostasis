@@ -119,8 +119,8 @@ the best alternative (secondary, more sensitive). Avoidance = floor-push value â
 
 | Part | State |
 |---|---|
-| Mechanics, observation, tests (`envs/gridworld/mechanics.py`, `tests/test_gridworld.py`) | Done |
-| Random layouts (`envs/gridworld/layout.py`), batched env, CNN, solo training script | Done |
+| Mechanics, observation, tests (`envs/gridworld/dynamics.py`, `drive.py`, `observation.py`, `tests/test_gridworld.py`) | Done |
+| Random layouts (`envs/gridworld/initial_state.py`), batched env, CNN, solo training script | Done |
 | Run outputs: one JSON folder per run, viewer page with run picker, curves and replays (`runs/outputs.py`, `ui/index.html`) | Done |
 | Scripted NPC, witnessed condition, verification counters | Not started |
 | Evaluation harness | Not started |

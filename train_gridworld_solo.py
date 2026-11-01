@@ -26,7 +26,7 @@ from tqdm.auto import tqdm
 from dqn.args import DQNArgs
 from dqn.trainer import DQNTrainer
 from envs.gridworld.config import GridworldConfig, Tile
-from envs.gridworld.mechanics import CHANNELS
+from envs.gridworld.observation import CHANNELS
 from envs.registry import make_envs
 from runs.outputs import new_run_dir, register_run, write_json
 from runs.recording import record_episodes, replay_data

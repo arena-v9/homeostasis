@@ -18,8 +18,8 @@ The layout:
           food                [row, col] of each food item
           action, reward      what the agent did from this state and the reward it got (absent on the last frame)
 
-`record_episodes` runs the single-env mechanics (envs.gridworld.mechanics.step) directly, so it records the true states, including
-the final state of an episode that ends in death.
+`record_episodes` runs the single-env dynamics (envs.gridworld.dynamics.take_step) directly, so it records the true
+states, including the final state of an episode that ends in death.
 """
 
 from typing import Callable
@@ -27,22 +27,27 @@ from typing import Callable
 import numpy as np
 import torch as t
 
-from envs.gridworld.batched import NpcPolicy, npc_stays
 from envs.gridworld.config import GridworldConfig, Tile
-from envs.gridworld.layout import random_state
-from envs.gridworld.mechanics import Action, observe, step
+from envs.gridworld.dynamics import Action, take_step
+from envs.gridworld.initial_state import generate_initial_state
+from envs.gridworld.npc_policy import NpcPolicy, stationary_npc_policy
+from envs.gridworld.observation import observe
 from envs.gridworld.state import Body, GridworldState
 
 
 def _body(body: Body) -> dict:
-    return {"pos": [int(p) for p in body.pos], "health": round(body.health, 4), "energy": round(body.energy, 4)}
+    return {
+        "pos": [int(coordinate) for coordinate in body.position],
+        "health": round(body.health, 4),
+        "energy": round(body.energy, 4),
+    }
 
 
 def _frame(state: GridworldState) -> dict:
     return {
         "agent": _body(state.agent),
         "npc": _body(state.npc) if state.npc.alive else None,
-        "food": [[int(r), int(c)] for r, c in np.argwhere(state.food)],
+        "food": [[int(row), int(col)] for row, col in np.argwhere(state.food)],
     }
 
 
@@ -52,48 +57,49 @@ def record_episodes(
     config: GridworldConfig,
     seeds,
     device,
-    npc_policy: NpcPolicy = npc_stays,
+    npc_policy: NpcPolicy = stationary_npc_policy,
 ) -> list[dict]:
     """Runs one full episode per seed, choosing the agent's actions with `act_fn(obs_batch) -> actions` (all
     episodes advance together so the network sees one batch per step). Returns one dict per episode."""
     rngs = [np.random.default_rng(seed) for seed in seeds]
-    states = [random_state(config, rng) for rng in rngs]
+    states = [generate_initial_state(config, rng) for rng in rngs]
     frames = [[_frame(state)] for state in states]
     fire_steps, food_eaten = [0] * len(states), [0] * len(states)
     outcomes: list[str | None] = [None] * len(states)
 
     for _ in range(config.max_steps):
-        active = [i for i, outcome in enumerate(outcomes) if outcome is None]
+        active = [index for index, outcome in enumerate(outcomes) if outcome is None]
         if not active:
             break
-        obs = t.from_numpy(np.stack([observe(states[i], config) for i in active])).to(device)
+        obs = t.from_numpy(np.stack([observe(states[index], config) for index in active])).to(device)
         actions = act_fn(obs).tolist()
-        for i, action in zip(active, actions):
-            res = step(states[i], Action(action), npc_policy(states[i], rngs[i]), config, rngs[i])
-            frames[i][-1].update(action=Action(action).name.lower(), reward=round(res.reward, 4))
-            if res.discarded:
-                outcomes[i] = "discarded push"
+        for index, action in zip(active, actions):
+            state, rng = states[index], rngs[index]
+            result = take_step(state, Action(action), npc_policy(state, rng), config, rng)
+            frames[index][-1].update(action=Action(action).name.lower(), reward=round(result.reward, 4))
+            if result.discarded:
+                outcomes[index] = "discarded push"
                 continue
-            food_eaten[i] += int(res.state.agent.energy > states[i].agent.energy)  # energy only rises by eating
-            fire_steps[i] += int(res.agent_on_hazard)
-            frames[i].append(_frame(res.state))
-            states[i] = res.state
-            if res.terminated:
-                outcomes[i] = "died"
-            elif res.truncated:
-                outcomes[i] = "survived"
+            food_eaten[index] += int(result.next_state.agent.energy > state.agent.energy)  # energy only rises by eating
+            fire_steps[index] += int(result.agent_on_hazard)
+            frames[index].append(_frame(result.next_state))
+            states[index] = result.next_state
+            if result.terminated:
+                outcomes[index] = "died"
+            elif result.truncated:
+                outcomes[index] = "survived"
 
     return [
         {
             "seed": int(seed),
-            "outcome": outcomes[i] or "survived",
-            "return": round(sum(f.get("reward", 0.0) for f in frames[i]), 2),
-            "fire_steps": fire_steps[i],
-            "food_eaten": food_eaten[i],
-            "tiles": states[i].tiles.tolist(),
-            "frames": frames[i],
+            "outcome": outcomes[index] or "survived",
+            "return": round(sum(frame.get("reward", 0.0) for frame in frames[index]), 2),
+            "fire_steps": fire_steps[index],
+            "food_eaten": food_eaten[index],
+            "tiles": states[index].tiles.tolist(),
+            "frames": frames[index],
         }
-        for i, seed in enumerate(seeds)
+        for index, seed in enumerate(seeds)
     ]
 
 
@@ -101,5 +107,5 @@ def replay_data(checkpoints: dict[str, list[dict]]) -> dict:
     """`checkpoints` maps a label (e.g. "untrained", "after 100k steps") to the episodes recorded at that point."""
     return {
         "tiles": {tile.name.lower(): int(tile) for tile in Tile},
-        "checkpoints": [{"label": label, "episodes": eps} for label, eps in checkpoints.items()],
+        "checkpoints": [{"label": label, "episodes": episodes} for label, episodes in checkpoints.items()],
     }
