@@ -25,14 +25,14 @@ from tqdm.auto import tqdm
 
 from dqn.args import DQNArgs
 from dqn.trainer import DQNTrainer
+from envs.gridworld.batched_env import BatchedGridworldEnv
 from envs.gridworld.config import GridworldConfig, Tile
 from envs.gridworld.observation import CHANNELS
-from envs.registry import make_envs
 from runs.outputs import new_run_dir, register_run, write_json
 from runs.recording import record_episodes, replay_data
 
-ENV_ID = "Gridworld-solo-v0"
-CONFIG = GridworldConfig(npc_enabled=False)  # must match the registered env
+CONFIG = GridworldConfig(npc_enabled=False)
+NUM_ENVS = 16  # gridworlds run side by side during training (one gradient step per NUM_ENVS new transitions)
 EVAL_ENVS, EVAL_SEED, EPISODE_STEPS = 64, 12345, 100
 REPLAY_SEEDS = range(1000, 1016)  # the same 16 layouts at every checkpoint
 ENERGY, SELF = CHANNELS.index("energy"), CHANNELS.index("self")
@@ -41,7 +41,7 @@ ENERGY, SELF = CHANNELS.index("energy"), CHANNELS.index("self")
 @t.inference_mode()
 def evaluate(act_fn, device) -> dict[str, float]:
     """Runs one 100-step episode on each of EVAL_ENVS fixed layouts and averages over them."""
-    env = make_envs(ENV_ID, EVAL_ENVS, EVAL_SEED, device)
+    env = BatchedGridworldEnv(EVAL_ENVS, EVAL_SEED, device, CONFIG)
     obs, _ = env.reset()
     alive = t.ones(EVAL_ENVS, dtype=t.bool, device=obs.device)
     episode_return, fire_steps, food_eaten = (t.zeros(EVAL_ENVS, device=obs.device) for _ in range(3))
@@ -85,9 +85,7 @@ def main():
     cli = parser.parse_args()
 
     args = DQNArgs(
-        env_id=ENV_ID,
         seed=cli.seed,
-        num_envs=16,
         total_timesteps=cli.timesteps,
         buffer_size=20_000,
         batch_size=128,
@@ -100,7 +98,7 @@ def main():
         use_wandb=cli.wandb,
         wandb_project_name="GridworldSolo",
     )
-    trainer = DQNTrainer(args)
+    trainer = DQNTrainer(args, BatchedGridworldEnv(NUM_ENVS, args.seed, args.device, CONFIG))
     greedy = lambda obs: trainer.q_network(obs).argmax(-1)
 
     random_baseline = evaluate(lambda obs: t.randint(0, 5, (obs.shape[0],), device=obs.device), args.device)
@@ -108,12 +106,12 @@ def main():
 
     record = lambda: record_episodes(greedy, CONFIG, REPLAY_SEEDS, args.device)
     replays = {"untrained": record()}
-    replay_at = {args.total_training_steps * k // 4: f"{k * 25}% trained" for k in (1, 2, 3, 4)}
+    replay_at = {trainer.total_training_steps * k // 4: f"{k * 25}% trained" for k in (1, 2, 3, 4)}
 
     t0 = time.time()
     trainer.prepopulate_replay_buffer()
     history = [{"env_steps": trainer.agent.step, **evaluate(greedy, args.device)}]
-    pbar = tqdm(range(args.total_training_steps))
+    pbar = tqdm(range(trainer.total_training_steps))
     for step in pbar:
         trainer.add_to_replay_buffer(args.steps_per_update)
         trainer.training_step(step)
@@ -143,6 +141,7 @@ def main():
         "train_seconds": round(train_seconds),
         "final": final,
         "random": random_baseline,
+        "num_envs": NUM_ENVS,
         "args": {k: str(v) if k == "device" else v for k, v in vars(args).items()},
         "config": config_dict(CONFIG),
     })

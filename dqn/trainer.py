@@ -9,7 +9,7 @@ from dqn.agent import DQNAgent
 from dqn.args import DQNArgs
 from dqn.networks import ConvQNetwork, QNetwork
 from dqn.replay_buffer import ReplayBuffer
-from envs.registry import make_envs
+from envs.gpu_env import GPUEnv
 
 
 def get_episode_data_from_infos(infos: dict) -> dict[str, int | float] | None:
@@ -28,13 +28,18 @@ def get_episode_data_from_infos(infos: dict) -> dict[str, int | float] | None:
 
 
 class DQNTrainer:
-    def __init__(self, args: DQNArgs):
+    """
+    Trains a DQN agent on `envs`, any batched environment with the GPUEnv interface (envs/gpu_env.py). The caller
+    builds and seeds the environment; the trainer reads everything it needs (number of envs, observation and action
+    spaces) from it.
+    """
+
+    def __init__(self, args: DQNArgs, envs: GPUEnv):
         set_global_seeds(args.seed)
         self.args = args
+        self.envs = envs
         self.rng = t.Generator(device=args.device).manual_seed(args.seed)
-        self.run_name = f"{args.env_id}__{args.wandb_project_name}__seed{args.seed}__{time.strftime('%Y%m%d-%H%M%S')}"
-
-        self.envs = make_envs(args.env_id, args.num_envs, args.seed, args.device)
+        self.run_name = f"{type(envs).__name__}__{args.wandb_project_name}__seed{args.seed}__{time.strftime('%Y%m%d-%H%M%S')}"
 
         # Define some basic variables from our environment (note, we assume a single discrete action space)
         num_envs = self.envs.num_envs
@@ -42,6 +47,11 @@ class DQNTrainer:
         num_actions = self.envs.single_action_space.n
         obs_shape = self.envs.single_observation_space.shape
         assert action_shape == ()
+
+        # Every call to `agent.play_step` advances all `num_envs` environments by one step; we take one optimization
+        # step per `steps_per_update` such calls, so this is the total number of optimization steps
+        assert args.total_timesteps - args.buffer_size >= args.steps_per_update * num_envs
+        self.total_training_steps = (args.total_timesteps - args.buffer_size) // (args.steps_per_update * num_envs)
 
         # Create our replay buffer (on the same device as the environment)
         self.buffer = ReplayBuffer(num_envs, obs_shape, action_shape, args.buffer_size, args.seed, args.device)
@@ -91,7 +101,7 @@ class DQNTrainer:
         """
         Called to fill the replay buffer before training starts.
         """
-        n_steps_to_fill_buffer = self.args.buffer_size // self.args.num_envs
+        n_steps_to_fill_buffer = self.args.buffer_size // self.envs.num_envs
         self.add_to_replay_buffer(n_steps_to_fill_buffer, verbose=True)
 
     def training_step(self, step: int) -> None:
@@ -142,7 +152,7 @@ class DQNTrainer:
 
         self.prepopulate_replay_buffer()
 
-        pbar = tqdm(range(self.args.total_training_steps))
+        pbar = tqdm(range(self.total_training_steps))
         last_logged_time, last_logged_step = time.time(), self.agent.step  # so we don't log too often
 
 

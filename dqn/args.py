@@ -9,8 +9,6 @@ from common import device
 class DQNArgs:
     # Basic / global
     seed: int = 1
-    env_id: str = "Probe1-v0"  # any id registered in env_registry.ENVS
-    num_envs: int = 16  # number of parallel environments to run
     device: str = device
 
     # Wandb / logging
@@ -35,8 +33,4 @@ class DQNArgs:
     end_e: float = 0.02
 
     def __post_init__(self):
-        assert self.total_timesteps - self.buffer_size >= self.steps_per_update * self.num_envs
-        # Every call to `agent.play_step` advances all `num_envs` environments by one step; we take one optimization
-        # step per `steps_per_update` such calls, so this is the total number of optimization steps
-        self.total_training_steps = (self.total_timesteps - self.buffer_size) // (self.steps_per_update * self.num_envs)
         self.device = t.device(self.device)

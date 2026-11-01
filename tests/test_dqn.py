@@ -19,7 +19,7 @@ from dqn.exploration import epsilon_greedy_policy, linear_schedule
 from dqn.networks import QNetwork
 from dqn.replay_buffer import ReplayBuffer
 from dqn.trainer import DQNTrainer
-from envs.probe_envs import Probe1, Probe5
+from envs.probe_envs import Probe1, Probe2, Probe3, Probe4, Probe5
 
 
 class CountingEnv:
@@ -134,8 +134,8 @@ rather than one per env."""
 
 def test_agent(DQNAgent):
     # Set up args and envs (4 counting envs: envs 0 and 2 end by termination, envs 1 and 3 by truncation)
-    args = DQNArgs(use_wandb=False, buffer_size=100, num_envs=4)
-    envs = CountingEnv(num_envs=args.num_envs)
+    args = DQNArgs(use_wandb=False, buffer_size=100)
+    envs = CountingEnv(num_envs=4)
     num_envs = envs.num_envs
     action_shape = envs.single_action_space.shape
     obs_shape = envs.single_observation_space.shape
@@ -260,19 +260,18 @@ def test_probe(probe_idx: int):
     """
     # Train our network on this probe env.
     args = DQNArgs(
-        env_id=f"Probe{probe_idx}-v0",
         wandb_project_name=f"test-probe-{probe_idx}",
         total_timesteps=3000 if probe_idx <= 2 else 5000,
         learning_rate=0.001,
         buffer_size=500,
         use_wandb=False,
         trains_per_target_update=20,
-        num_envs=1,
         steps_per_update=10,
         exploration_fraction=0.2,
         end_e=0.1,
     )
-    trainer = DQNTrainer(args)
+    probe_cls = [Probe1, Probe2, Probe3, Probe4, Probe5][probe_idx - 1]
+    trainer = DQNTrainer(args, probe_cls(num_envs=1, seed=args.seed, device=args.device))
     trainer.train()
 
     # Get the correct set of observations, and corresponding values we expect
