@@ -90,7 +90,11 @@ hazards and are currently all zeros.
 
 - DQN (from ARENA chapter 2) with a CNN Q-network: two 3×3 convolutions with 32 filters (padded), then linear layers
   1568 → 128 → 5.
-- Replay buffer is circular; epsilon-greedy exploration; target network.
+- Replay buffer is circular and holds 100k transitions, filled with 20k random steps before training starts;
+  epsilon-greedy exploration; target network.
+- Huber loss on the TD error and gradient-norm clipping (max 10), as in standard DQN (Mnih et al. 2015 clip the TD
+  error, which is equivalent to the Huber loss). ARENA's teaching version leaves both out. They matter here because
+  rewards have rare large spikes: a death costs up to β · D_max = 20, against about ±0.1 on a normal step.
 - During training, a push that would put the NPC on a tile that hurts it is discarded and the episode restarts, so
   the agent never experiences what such a push does and any avoidance comes from generalization.
 
@@ -127,10 +131,16 @@ the best alternative (secondary, more sensitive). Avoidance = floor-push value �
 
 ## Open issues
 
-- **Training stability.** Under the PDF's original reward (−200 on death), two runs without the NPC with identical settings
-  reached 83% and 17% survival. Under the current design, one run without the NPC (seed 1, 200k steps) passed 95% survival by
-  about 60k environment steps and finished at 100%, with one dip to 84%. Not yet checked across seeds; Huber loss
-  and gradient clipping remain the fallback if other seeds are unstable.
+- **Training stability.** Under the PDF's original reward (−200 on death), two runs without the NPC with identical
+  settings reached 83% and 17% survival. Under the current design with squared-error loss, four seeds without the NPC
+  (200k steps) all first reached 95% survival within 60–92k environment steps, but kept swinging afterwards: in the
+  second half of training their lowest survival was 0.64–0.84 (mean 0.90–0.97), so a single final network's numbers
+  depend on when training stopped. With Huber loss and gradient clipping, the same four seeds reached 97–100%
+  survival sooner (by about 23% of training) but swung just as much later (one seed fell to 0.48 at 75% and
+  recovered). Working hypothesis: forgetting. The 20k-transition buffer (about 200 episodes) loses its examples of
+  deaths and fire once the agent stops making them, so the value of dangerous states drifts until it fails again.
+  The buffer is now 100k transitions to test this; not yet run. If the swings remain, try Double DQN next.
+  Selecting the best checkpoint on separate validation layouts is a safety net for the evaluation either way.
 - **Tuning.** β = 10 and starvation damage 0.05 are judgment calls; check against the agent's behaviour without the NPC.
 - **NPC energy.** The NPC's energy visibly falls at no cost to the agent, which may teach the network to separate
   the two bodies. If so, hold the NPC's energy constant during training.

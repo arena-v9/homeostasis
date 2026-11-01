@@ -56,7 +56,8 @@ def make_dqn_args(cli: argparse.Namespace) -> DQNArgs:
     return DQNArgs(
         seed=cli.seed,
         total_timesteps=cli.timesteps,
-        buffer_size=20_000,
+        buffer_size=100_000,  # large enough to keep early failures (deaths, fire) after the agent stops making them
+        learning_starts=20_000,
         batch_size=128,
         learning_rate=5e-4,
         gamma=0.99,

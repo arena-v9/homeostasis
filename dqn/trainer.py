@@ -1,6 +1,7 @@
 import time
 
 import torch as t
+import torch.nn.functional as F
 import wandb
 from tqdm.auto import tqdm
 
@@ -39,7 +40,8 @@ class DQNTrainer:
         self.args = args
         self.envs = envs
         self.rng = t.Generator(device=args.device).manual_seed(args.seed)
-        self.run_name = f"{type(envs).__name__}__{args.wandb_project_name}__seed{args.seed}__{time.strftime('%Y%m%d-%H%M%S')}"
+        start_time = time.strftime("%Y%m%d-%H%M%S")
+        self.run_name = f"{type(envs).__name__}__{args.wandb_project_name}__seed{args.seed}__{start_time}"
 
         # Define some basic variables from our environment (note, we assume a single discrete action space)
         num_envs = self.envs.num_envs
@@ -50,8 +52,8 @@ class DQNTrainer:
 
         # Every call to `agent.play_step` advances all `num_envs` environments by one step; we take one optimization
         # step per `steps_per_update` such calls, so this is the total number of optimization steps
-        assert args.total_timesteps - args.buffer_size >= args.steps_per_update * num_envs
-        self.total_training_steps = (args.total_timesteps - args.buffer_size) // (args.steps_per_update * num_envs)
+        assert args.total_timesteps - args.learning_starts >= args.steps_per_update * num_envs
+        self.total_training_steps = (args.total_timesteps - args.learning_starts) // (args.steps_per_update * num_envs)
 
         # Create our replay buffer (on the same device as the environment)
         self.buffer = ReplayBuffer(num_envs, obs_shape, action_shape, args.buffer_size, args.seed, args.device)
@@ -101,8 +103,8 @@ class DQNTrainer:
         """
         Called to fill the replay buffer before training starts.
         """
-        n_steps_to_fill_buffer = self.args.buffer_size // self.envs.num_envs
-        self.add_to_replay_buffer(n_steps_to_fill_buffer, verbose=True)
+        warm_up_play_steps = self.args.learning_starts // self.envs.num_envs
+        self.add_to_replay_buffer(warm_up_play_steps, verbose=True)
 
     def training_step(self, step: int) -> None:
         """
@@ -122,9 +124,12 @@ class DQNTrainer:
         # alternatively with indexing
         # self.q_network(data.obs)[range(len(data.actions)), data.actions]
 
-        td_error = data.rewards + self.args.gamma * target_max * (1 - data.terminated.float()) - predicted_q_vals
-        loss = td_error.pow(2).mean()
+        td_target = data.rewards + self.args.gamma * target_max * (1 - data.terminated.float())
+        # Huber loss: squared for small TD errors, linear for large ones, so one rare large error (e.g. a death) can't
+        # cause a huge update. This and gradient clipping are standard in DQN (Mnih et al. 2015's error clipping).
+        loss = F.smooth_l1_loss(predicted_q_vals, td_target)
         loss.backward()
+        t.nn.utils.clip_grad_norm_(self.q_network.parameters(), self.args.max_grad_norm)
         self.optimizer.step()
         self.optimizer.zero_grad()
 

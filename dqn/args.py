@@ -20,11 +20,14 @@ class DQNArgs:
     total_timesteps: int = 300_000  # total environment steps (summed over all envs), including buffer filling
     steps_per_update: int = 1  # calls to `agent.play_step` (each = num_envs environment steps) per optimization step
     trains_per_target_update: int = 50  # optimization steps between target network updates
-    buffer_size: int = 10_000  # replay buffer capacity (environment steps used to fill it before training)
+    buffer_size: int = 10_000  # replay buffer capacity, in transitions
+    # Environment steps (with random actions) that fill the buffer before training starts. None means buffer_size.
+    learning_starts: int | None = None
 
     # Optimization hparams
     batch_size: int = 512
     learning_rate: float = 5e-3
+    max_grad_norm: float = 10.0  # gradients are rescaled so their total norm is at most this (standard in DQN)
 
     # RL-specific
     gamma: float = 0.99
@@ -34,3 +37,6 @@ class DQNArgs:
 
     def __post_init__(self):
         self.device = t.device(self.device)
+        if self.learning_starts is None:
+            self.learning_starts = self.buffer_size
+        assert self.learning_starts <= self.buffer_size, "the warm-up steps must fit in the buffer"
