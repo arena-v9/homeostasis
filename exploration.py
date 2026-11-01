@@ -2,7 +2,6 @@ import torch as t
 from jaxtyping import Float, Int
 from torch import Tensor
 
-from cartpole import CartPole
 from q_network import QNetwork
 
 
@@ -25,7 +24,7 @@ def linear_schedule(
 
 
 def epsilon_greedy_policy(
-    envs: CartPole,
+    envs,
     q_network: QNetwork,
     rng: t.Generator,
     obs: Float[Tensor, " num_envs *obs_shape"],

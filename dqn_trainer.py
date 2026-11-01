@@ -4,11 +4,11 @@ import torch as t
 import wandb
 from tqdm.auto import tqdm
 
-from cartpole import CartPole
 from common import set_global_seeds
 from dqn_agent import DQNAgent
 from dqn_args import DQNArgs
 from env_registry import make_envs
+from gpu_env import GPUEnv
 from q_network import QNetwork
 from replay_buffer import ReplayBuffer
 from video import LiveVideo, log_greedy_rollout_video
@@ -146,8 +146,8 @@ class DQNTrainer:
         last_logged_time, last_logged_step = time.time(), self.agent.step  # so we don't log too often
 
         greedy = lambda obs: self.q_network(obs).argmax(-1)
-        fresh_envs = lambda seed: CartPole(num_envs=16, seed=seed, device=self.args.device)
-        can_render = self.args.env_id == "CartPole-gpu"
+        fresh_envs = lambda seed: make_envs(self.args.env_id, 16, seed, self.args.device)
+        can_render = isinstance(self.envs, GPUEnv) and type(self.envs).draw is not GPUEnv.draw  # env defines draw()
         live_videos = can_render and self.args.steps_per_live_video is not None
         wandb_videos = can_render and self.args.use_wandb and self.args.video_log_freq is not None
         video_slot = LiveVideo(overwrite=self.args.overwrite_video)  # one display slot per run (see video.LiveVideo)

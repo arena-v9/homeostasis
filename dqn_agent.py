@@ -2,7 +2,6 @@ import torch as t
 from jaxtyping import Float, Int
 from torch import Tensor
 
-from cartpole import CartPole
 from exploration import epsilon_greedy_policy, linear_schedule
 from q_network import QNetwork
 from replay_buffer import ReplayBuffer
@@ -13,7 +12,7 @@ class DQNAgent:
 
     def __init__(
         self,
-        envs: CartPole,
+        envs,
         buffer: ReplayBuffer,
         q_network: QNetwork,
         start_e: float,

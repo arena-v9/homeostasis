@@ -8,7 +8,6 @@ wandb>=0.18
 # Plotting (plotting.py) and notebook display
 plotly
 pandas  # used by plotly.express
-einops
 ipython
 
 # Rollout videos (video.py)

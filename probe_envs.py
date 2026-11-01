@@ -28,7 +28,7 @@ class Probe1(gym.Env):
     One action, observation of [0.0], one timestep long, +1 reward.
 
     We expect the agent to rapidly learn that the value of the constant [0.0] observation is +1.0.
-    Note we're using a continuous observation space for consistency with CartPole.
+    Note we're using a continuous observation space, like the other environments.
     """
 
     action_space: Discrete

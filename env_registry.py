@@ -8,11 +8,9 @@ from typing import Callable
 
 import torch as t
 
-from cartpole import CartPole
 from probe_envs import Probe1, Probe2, Probe3, Probe4, Probe5
 
 ENVS: dict[str, Callable] = {
-    "CartPole-gpu": CartPole,
     "Probe1-v0": Probe1,
     "Probe2-v0": Probe2,
     "Probe3-v0": Probe3,

@@ -69,7 +69,7 @@ def render_rollout_grid_html(obs, draw_fn, dones=None, fps=50, cell_w=160, cell_
     return frames_to_video_html(frames, fps=fps)
 
 
-def greedy_rollout(env, act_fn, steps=500):
+def greedy_rollout(env, act_fn, steps=100):
     """Roll a (freshly constructed, batched) env forward `steps` steps, acting with `act_fn(obs) -> actions`
     and no exploration (for DQN, `lambda obs: q_network(obs).argmax(-1)`).
     Returns obs `(num_envs, steps, *obs_shape)`, dones `(num_envs, steps)` and each env's lifespan before
@@ -109,7 +109,7 @@ class LiveVideo:
             self.handle = display(video, display_id=True)
 
 
-def log_greedy_rollout_video(env, act_fn, draw_fn, *, key="greedy_rollout", step=None, live=False, steps=500, slot=None):
+def log_greedy_rollout_video(env, act_fn, draw_fn, *, key="greedy_rollout", step=None, live=False, steps=100, slot=None):
     """`greedy_rollout` followed by `log_grid_video`: roll a fresh env forward greedily and render / log /
     display the result (`slot`: a `LiveVideo` to display into). Returns the rollout's lifespans."""
     obs, dones, lifespan = greedy_rollout(env, act_fn, steps=steps)

@@ -4,10 +4,46 @@ compare against its reference `solutions.py`; these check against independently 
 so they only depend on files in this folder.
 """
 
+import numpy as np
 import torch as t
+from gymnasium.spaces import Box, Discrete
 
-from cartpole import CartPole
 from common import device
+from probe_envs import Probe5
+
+
+class CountingEnv:
+    """
+    Tiny batched env for testing what the agent stores in the replay buffer. Each env's observation is its step
+    count within the episode, [0], [1], ..., and every episode ends when the count reaches EPISODE_LENGTH: by
+    *termination* for even-numbered envs and by *truncation* (a time limit) for odd-numbered ones. Done envs
+    auto-reset to [0] inside `step`, reporting the true final observation [EPISODE_LENGTH] in
+    `infos["final_observation"]`. So for every correctly stored transition, next_obs == obs + 1.
+    """
+
+    EPISODE_LENGTH = 5
+
+    def __init__(self, num_envs: int, device: t.device = device):
+        self.num_envs = num_envs
+        self.device = device
+        self.single_observation_space = Box(np.array([0.0], dtype=np.float32), np.array([self.EPISODE_LENGTH], dtype=np.float32))
+        self.single_action_space = Discrete(2)  # actions are ignored
+        self.ends_by_termination = t.arange(num_envs, device=device) % 2 == 0
+        self.state = t.zeros([num_envs, 1], dtype=t.float32, device=device)
+
+    def reset(self):
+        self.state = t.zeros([self.num_envs, 1], dtype=t.float32, device=self.device)
+        return self.state.clone(), {}
+
+    def step(self, action):
+        self.state = self.state + 1
+        ended = self.state[:, 0] == self.EPISODE_LENGTH
+        terminated = ended & self.ends_by_termination
+        truncated = ended & ~self.ends_by_termination
+        reward = t.ones(self.num_envs, dtype=t.float32, device=self.device)
+        infos = {"final_observation": self.state.clone()}
+        self.state = t.where(ended.unsqueeze(-1), t.zeros_like(self.state), self.state)  # auto-reset
+        return self.state.clone(), reward, terminated, truncated, infos
 
 
 def get_steps(obj):
@@ -43,7 +79,7 @@ def test_epsilon_greedy_policy(my_epsilon_greedy_policy):
 
     # Lots of envs, so that "what fraction of envs did X" is a stable statistic
     num_envs = 2000
-    envs = CartPole(num_envs=num_envs, seed=0, device=device)
+    envs = Probe5(num_envs=num_envs, seed=0, device=device)  # 2 actions, random 0/1 observations
     obs, _ = envs.reset()
     num_actions = envs.single_action_space.n
     q_network = QNetwork(envs.single_observation_space.shape, num_actions).to(device)
@@ -93,14 +129,15 @@ def test_agent(DQNAgent):
     from q_network import QNetwork
     from replay_buffer import ReplayBuffer
 
-    # Set up args and envs (a small batch of CartPole envs)
+    # Set up args and envs (4 counting envs: envs 0 and 2 end by termination, envs 1 and 3 by truncation)
     args = DQNArgs(use_wandb=False, buffer_size=100, num_envs=4)
-    envs = CartPole(num_envs=args.num_envs, seed=args.seed, device=device)
+    envs = CountingEnv(num_envs=args.num_envs)
     num_envs = envs.num_envs
     action_shape = envs.single_action_space.shape
     obs_shape = envs.single_observation_space.shape
     num_actions = envs.single_action_space.n
     rng = t.Generator(device=device).manual_seed(args.seed)
+    L = CountingEnv.EPISODE_LENGTH
 
     # Set up networks, buffer, and agent
     q_network = QNetwork(obs_shape, num_actions).to(device)
@@ -130,58 +167,48 @@ def test_agent(DQNAgent):
     # Check shapes of everything in replay experiences
     for name in ["obs", "actions", "rewards", "terminated", "next_obs"]:
         data = getattr(buffer, name)
-        expected_shape = (args.buffer_size, 4) if "obs" in name else (args.buffer_size,)
+        expected_shape = (args.buffer_size, *obs_shape) if "obs" in name else (args.buffer_size,)
         assert isinstance(data, t.Tensor), f"Replay buffer's {name} should be a tensor, got {type(data)}."
         assert data.shape == expected_shape, f"Replay buffer's {name} has incorrect shape: expected {expected_shape}, got {data.shape}."
 
-    # The buffer holds one row per env per step, in the order they were added. So row i is (some env, some step),
-    # and the SAME env one step later is row i + num_envs.
-    obs_rows = buffer.obs.cpu()
-    next_obs_rows = buffer.next_obs.cpu()
+    # The buffer holds one row per env per step, in the order they were added. So row i comes from env
+    # i % num_envs (n_steps * num_envs and buffer_size are both multiples of num_envs), and the SAME env one step
+    # later is row i + num_envs.
+    assert (n_steps * num_envs) % num_envs == 0 and args.buffer_size % num_envs == 0
+    obs_rows = buffer.obs[:, 0].cpu()
+    next_obs_rows = buffer.next_obs[:, 0].cpu()
     terminated_rows = buffer.terminated.cpu()
-    THRESHOLD_ANGLE = 0.2095
-    THRESHOLD_X = 2.4
 
-    def describe(row):
-        return f"x={row[0]:.4f}, angle={row[2]:.4f}"
+    for i, (obs, next_obs, terminated) in enumerate(zip(obs_rows.tolist(), next_obs_rows.tolist(), terminated_rows.tolist())):
+        env_idx = i % num_envs
+        episode_ended = next_obs == L
 
-    def in_bounds(row):
-        return abs(row[0]) < THRESHOLD_X and abs(row[2]) < THRESHOLD_ANGLE
-
-    for i, (obs, next_obs, terminated) in enumerate(zip(obs_rows, next_obs_rows, terminated_rows)):
-        # Check whether you've accidentally used 'obs = next_obs' (this is never correct)
-        assert not t.equal(obs, next_obs), f"""
-For each (obs, actions, rewards, terminated, next_obs) added to the buffer you should never have obs=next_obs.
-'next_obs' is always either the next value of 'obs', or the terminal observation. But you have
-obs[i] = next_obs[i] = {obs.tolist()} for {i=}."""
-
-        # Check whether 'next_obs' is the observation immediately after 'obs' (at non-terminated states)
-        if not terminated and i + num_envs < len(obs_rows):
-            obs_next_step = obs_rows[i + num_envs]
-            assert t.allclose(obs_next_step, next_obs), f"""
-For each (obs, actions, rewards, terminated, next_obs) added to the buffer, if 'terminated=False' (i.e. the episode
-hasn't terminated), then the 'next_obs' should be the same as the next value of 'obs' for that env - which is
-num_envs={num_envs} rows further on in the buffer. But you have
-obs[i+num_envs] = {obs_next_step.tolist()}, next_obs[i] = {next_obs.tolist()} for {i=}."""
-
-        # 'obs' should always be within the pole-angle and cart-position thresholds
-        assert in_bounds(obs), f"""
-Agent observation 'obs' was ({describe(obs)}) at row {i}.
-This should always be within the pole-angle threshold (+-{THRESHOLD_ANGLE}) and cart-position threshold (+-{THRESHOLD_X}).
+        # 'obs' is never the final observation (envs auto-reset), so it should always be in [0, L)
+        assert 0 <= obs < L, f"""
+Agent observation 'obs' was {obs} at row {i}, but it should always be in [0, {L}).
 Did you accidentally edit 'obs' before adding it to the buffer, when you meant to only change 'next_obs'?"""
 
-        if terminated:
-            # if terminated, then next_obs should be the terminal observation (i.e. outside range)
-            assert not in_bounds(next_obs), f"""
-Agent observation 'next_obs' was ({describe(next_obs)}) at row {i}, a terminated step (i.e. when terminated=True).
-This is within bounds, but it should be outside bounds since this is a terminal state.
-You've probably used the reset obs from the new episode (which is the default returned by 'envs.step').
-Instead you need to use the true terminal obs, which you can get from infos["final_observation"]."""
-        else:
-            # if not terminated, then next_obs should be within threshold
-            assert in_bounds(next_obs), f"""
-Agent observation 'next_obs' was ({describe(next_obs)}) at row {i}, a non-terminated step.
-This should always be within the pole-angle threshold (+-{THRESHOLD_ANGLE}) and cart-position threshold (+-{THRESHOLD_X})."""
+        # 'next_obs' should always be the observation one step after 'obs' - including at the end of an episode,
+        # where it's the true final observation, not the reset observation of the next episode.
+        assert next_obs == obs + 1, f"""
+For each (obs, actions, rewards, terminated, next_obs) added to the buffer, 'next_obs' should be the observation one
+step after 'obs'. But you have obs={obs}, next_obs={next_obs} at row {i}.
+If next_obs is 0, you've probably used the reset obs from the new episode (which is what 'envs.step' returns for
+envs that just finished). Instead you need to use the true final obs, from infos["final_observation"]."""
+
+        # 'terminated' should be True only for genuine terminations, not for truncations (time limits)
+        expected_terminated = episode_ended and env_idx % 2 == 0
+        assert terminated == expected_terminated, f"""
+Row {i} (env {env_idx}, next_obs={next_obs}) has terminated={terminated}, expected {expected_terminated}.
+Envs 0 and 2 end by termination and envs 1 and 3 by truncation. The buffer should store 'terminated', not
+'terminated | truncated': a truncated episode didn't really end, so its value should still be bootstrapped."""
+
+        # Within an episode, 'next_obs' should match the 'obs' this env sees on its next step (num_envs rows later)
+        if not episode_ended and i + num_envs < len(obs_rows):
+            obs_next_step = obs_rows[i + num_envs].item()
+            assert obs_next_step == next_obs, f"""
+'next_obs' should be the same as the next value of 'obs' for that env - which is num_envs={num_envs} rows further on
+in the buffer. But you have obs[i+num_envs] = {obs_next_step}, next_obs[i] = {next_obs} for {i=}."""
 
     # Check whether epsilon is being updated correctly. Epsilon is computed at the START of each play_step from
     # self.step, and self.step then advances by num_envs - so the last value used was at step - num_envs.

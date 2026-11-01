@@ -9,13 +9,13 @@ from common import device
 class DQNArgs:
     # Basic / global
     seed: int = 1
-    env_id: str = "CartPole-gpu"
+    env_id: str = "Probe1-v0"  # any id registered in env_registry.ENVS
     num_envs: int = 16  # number of parallel environments to run
     device: str = device
 
     # Wandb / logging
     use_wandb: bool = False
-    wandb_project_name: str = "DQNCartPole"
+    wandb_project_name: str = "DQN"
     wandb_entity: str | None = None
     video_log_freq: int | None = None  # number of optimization steps between wandb video upload
     steps_per_live_video: int | None = 5_000  # number of optimization steps between live video display

@@ -10,7 +10,7 @@ class ReplayBufferSamples:
     Samples from the replay buffer, as PyTorch tensors ready to feed into the Q-network.
 
     Data is equivalent to (s_t, a_t, r_{t+1}, d_{t+1}, s_{t+1}). Note - here, d_{t+1} is actually **terminated** rather
-    than **done** (i.e. it records the times when we went out of bounds, not when the environment timed out).
+    than **done** (i.e. it records when the episode genuinely ended, not when it was cut off by a time limit).
     """
 
     obs: Float[Tensor, " sample_size *obs_shape"]
