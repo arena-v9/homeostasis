@@ -1,15 +1,25 @@
 """
-Tests for the DQN pieces (adapted from ARENA's `chapter2_rl/exercises/part21_dqn/tests.py`). ARENA's versions
-compare against its reference `solutions.py`; these check against independently computed expectations instead,
-so they only depend on files in this folder.
+Tests for the DQN pieces (adapted from ARENA's `chapter2_rl/exercises/part21_dqn/tests.py` and the 2.2.1 notebook):
+unit tests for the Q-network, exploration schedule, epsilon-greedy policy and agent, then a short DQN training run
+on each of the five probe environments. ARENA's versions compare against its reference `solutions.py`; these check
+against independently computed expectations instead.
+
+Run from the repo root: python -m tests.test_dqn
 """
 
 import numpy as np
 import torch as t
+import torch.nn as nn
 from gymnasium.spaces import Box, Discrete
 
 from common import device
-from probe_envs import Probe5
+from dqn.agent import DQNAgent
+from dqn.args import DQNArgs
+from dqn.exploration import epsilon_greedy_policy, linear_schedule
+from dqn.networks import QNetwork
+from dqn.replay_buffer import ReplayBuffer
+from dqn.trainer import DQNTrainer
+from envs.probe_envs import Probe1, Probe5
 
 
 class CountingEnv:
@@ -75,7 +85,6 @@ def test_linear_schedule(my_linear_schedule):
 
 
 def test_epsilon_greedy_policy(my_epsilon_greedy_policy):
-    from q_network import QNetwork
 
     # Lots of envs, so that "what fraction of envs did X" is a stable statistic
     num_envs = 2000
@@ -124,11 +133,6 @@ rather than one per env."""
 
 
 def test_agent(DQNAgent):
-    from dqn_args import DQNArgs
-    from exploration import linear_schedule
-    from q_network import QNetwork
-    from replay_buffer import ReplayBuffer
-
     # Set up args and envs (4 counting envs: envs 0 and 2 end by termination, envs 1 and 3 by truncation)
     args = DQNArgs(use_wandb=False, buffer_size=100, num_envs=4)
     envs = CountingEnv(num_envs=args.num_envs)
@@ -225,3 +229,74 @@ Remember to update using 'self.epsilon = linear_schedule(self.step, ...)' in 'ge
 The value of 'self.step' should be 0 the first time this is called."""
 
     print("All tests in `test_agent` passed!")
+
+
+def run_tests():
+    net = QNetwork(obs_shape=(4,), num_actions=2)
+    n_params = sum((p.nelement() for p in net.parameters()))
+    assert isinstance(getattr(net, "layers", None), nn.Sequential)
+    print(net)
+    print(f"Total number of parameters: {n_params}")
+    print("You should manually verify network is Linear-ReLU-Linear-ReLU-Linear")
+    assert not isinstance(net.layers[-1], nn.ReLU)
+    assert n_params == 10934
+
+    test_linear_schedule(linear_schedule)
+    test_epsilon_greedy_policy(epsilon_greedy_policy)
+
+    env = Probe1(num_envs=4)
+    assert env.single_observation_space.shape == (1,)
+    assert env.single_action_space.shape == ()
+    obs, _ = env.reset()
+    assert obs.shape == (4, 1)
+
+    test_agent(DQNAgent)
+
+
+def test_probe(probe_idx: int):
+    """
+    Tests a probe environment by training a network on it & verifying that the value functions are
+    in the expected range.
+    """
+    # Train our network on this probe env.
+    args = DQNArgs(
+        env_id=f"Probe{probe_idx}-v0",
+        wandb_project_name=f"test-probe-{probe_idx}",
+        total_timesteps=3000 if probe_idx <= 2 else 5000,
+        learning_rate=0.001,
+        buffer_size=500,
+        use_wandb=False,
+        trains_per_target_update=20,
+        num_envs=1,
+        steps_per_update=10,
+        exploration_fraction=0.2,
+        end_e=0.1,
+    )
+    trainer = DQNTrainer(args)
+    trainer.train()
+
+    # Get the correct set of observations, and corresponding values we expect
+    obs_for_probes = [[[0.0]], [[-1.0], [+1.0]], [[0.0], [1.0]], [[0.0]], [[0.0], [1.0]]]
+    expected_value_for_probes = [
+        [[1.0]],
+        [[-1.0], [+1.0]],
+        [[args.gamma], [1.0]],
+        [[-1.0, 1.0]],
+        [[1.0, -1.0], [-1.0, 1.0]],
+    ]
+    tolerances = [5e-4, 5e-4, 5e-4, 5e-4, 1e-3]
+    obs = t.tensor(obs_for_probes[probe_idx - 1]).to(device)
+
+    # Calculate the actual value, and verify it
+    value = trainer.q_network(obs)
+    # A bf16 network (e.g. under autocast) can't represent these targets to better than its eps
+    atol = max(tolerances[probe_idx - 1], t.finfo(value.dtype).eps)
+    expected_value = t.tensor(expected_value_for_probes[probe_idx - 1]).to(device)
+    t.testing.assert_close(value.float(), expected_value, atol=atol, rtol=0)
+    print("Probe tests passed!\n")
+
+
+if __name__ == "__main__":
+    run_tests()
+    for probe_idx in range(1, 6):
+        test_probe(probe_idx)

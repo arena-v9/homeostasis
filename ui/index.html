@@ -92,7 +92,7 @@ h2 { margin: 14px 0 0; font-size: 1.05rem; }
 <script>
 // Reads outputs/runs.json (the list of runs) and, for the chosen run, outputs/runs/<name>/run.json, curves.json and
 // replay.json.
-// See run_outputs.py and replay_viewer.py for their layouts. The chosen run is kept in the address (#<run name>).
+// See runs/outputs.py and runs/recording.py for their layouts. The chosen run is kept in the address (#<run name>).
 const $ = (id) => document.getElementById(id);
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 let RUNS = [], current = null, DATA = null, T = null, cp = 0, frame = 0, timer = null;

@@ -1,14 +1,14 @@
 """
-Tests for the single-environment gridworld mechanics (gridworld.py). Run with `python test_gridworld.py` (or pytest).
+Tests for the single-environment gridworld mechanics (envs/gridworld/mechanics.py). Run from the repo root: python -m tests.test_gridworld
 """
 
 from dataclasses import replace
 
 import numpy as np
 
-from gridworld import CHANNELS, Action, drive, empty_floor_tiles, observe, step
-from gridworld_config import GridworldConfig, Tile
-from gridworld_state import Body, GridworldState
+from envs.gridworld.config import GridworldConfig, Tile
+from envs.gridworld.mechanics import CHANNELS, Action, drive, empty_floor_tiles, observe, step
+from envs.gridworld.state import Body, GridworldState
 
 CONFIG = GridworldConfig()
 CH = {name: i for i, name in enumerate(CHANNELS)}

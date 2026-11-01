@@ -24,8 +24,8 @@ from enum import IntEnum
 
 import numpy as np
 
-from gridworld_config import GridworldConfig, Tile
-from gridworld_state import Body, GridworldState, Pos
+from envs.gridworld.config import GridworldConfig, Tile
+from envs.gridworld.state import Body, GridworldState, Pos
 
 
 class Action(IntEnum):

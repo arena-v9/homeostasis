@@ -4,7 +4,7 @@ Agonizing Pain"; adapted from ARENA's `chapter2_rl/exercises/gpu_probe.py`). Eac
 take and return tensors of shape `(num_envs, ...)`. Done envs auto-reset inside `step`, with the pre-reset
 observation reported in `infos["final_observation"]`.
 
-Expected values, given discount factor gamma (these are what the probe tests in main.py assert):
+Expected values, given discount factor gamma (these are what the probe tests in tests/test_dqn.py assert):
 
     Probe1: V([0]) = 1
     Probe2: V([x]) = x          (x is -1 or +1, drawn at episode start)

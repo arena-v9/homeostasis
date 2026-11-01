@@ -1,7 +1,7 @@
 # Homeostasis Gridworld: Current Design
 
 The living record of the experiment's design. Update it whenever the design changes. Code is the source of truth for
-numbers (`gridworld_config.py`); this file explains what the design is and why.
+numbers (`envs/gridworld/config.py`); this file explains what the design is and why.
 
 Last updated: 2026-11-01.
 
@@ -119,9 +119,9 @@ the best alternative (secondary, more sensitive). Avoidance = floor-push value â
 
 | Part | State |
 |---|---|
-| Mechanics, observation, tests (`gridworld.py`, `test_gridworld.py`) | Done |
-| Random layouts (`gridworld_layout.py`), batched env, CNN, solo training script | Done |
-| Run outputs: one JSON folder per run, viewer page with run picker, curves and replays (`run_outputs.py`, `ui/index.html`) | Done |
+| Mechanics, observation, tests (`envs/gridworld/mechanics.py`, `tests/test_gridworld.py`) | Done |
+| Random layouts (`envs/gridworld/layout.py`), batched env, CNN, solo training script | Done |
+| Run outputs: one JSON folder per run, viewer page with run picker, curves and replays (`runs/outputs.py`, `ui/index.html`) | Done |
 | Scripted NPC, witnessed condition, verification counters | Not started |
 | Evaluation harness | Not started |
 

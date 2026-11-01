@@ -4,13 +4,3 @@ gymnasium>=1.2,<2  # only for the observation/action space classes
 jaxtyping
 tqdm
 wandb>=0.18
-
-# Plotting (plotting.py) and notebook display
-plotly
-pandas  # used by plotly.express
-ipython
-
-# Rollout videos (video.py)
-opencv-python
-imageio
-imageio-ffmpeg

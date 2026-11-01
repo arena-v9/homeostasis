@@ -5,7 +5,7 @@ survive: eat to keep its energy up and stay off fire.
 Every `--eval-every` training steps it evaluates the greedy policy on the same 64 fixed layouts (one 100-step
 episode each) and records survival rate, return, steps on fire and food eaten. It also records 16 full episodes
 before training and at 25/50/75/100% of training. At the end it compares against a random policy and saves the run
-as JSON in its own folder, ui/outputs/runs/solo_seed<seed>_<steps>k_<date-time>/ (see run_outputs.py):
+as JSON in its own folder, ui/outputs/runs/solo_seed<seed>_<steps>k_<date-time>/ (see runs/outputs.py):
     run.json      settings and final results
     curves.json   the evaluations over training
     replay.json   the recorded episodes
@@ -23,13 +23,13 @@ from datetime import datetime
 import torch as t
 from tqdm.auto import tqdm
 
-from dqn_args import DQNArgs
-from dqn_trainer import DQNTrainer
-from env_registry import make_envs
-from gridworld import CHANNELS
-from gridworld_config import GridworldConfig, Tile
-from replay_viewer import record_episodes, replay_data
-from run_outputs import new_run_dir, register_run, write_json
+from dqn.args import DQNArgs
+from dqn.trainer import DQNTrainer
+from envs.gridworld.config import GridworldConfig, Tile
+from envs.gridworld.mechanics import CHANNELS
+from envs.registry import make_envs
+from runs.outputs import new_run_dir, register_run, write_json
+from runs.recording import record_episodes, replay_data
 
 ENV_ID = "Gridworld-solo-v0"
 CONFIG = GridworldConfig(npc_enabled=False)  # must match the registered env
@@ -99,7 +99,6 @@ def main():
         end_e=0.05,
         use_wandb=cli.wandb,
         wandb_project_name="GridworldSolo",
-        steps_per_live_video=None,
     )
     trainer = DQNTrainer(args)
     greedy = lambda obs: trainer.q_network(obs).argmax(-1)

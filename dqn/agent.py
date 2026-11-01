@@ -2,9 +2,9 @@ import torch as t
 from jaxtyping import Float, Int
 from torch import Tensor
 
-from exploration import epsilon_greedy_policy, linear_schedule
-from q_network import QNetwork
-from replay_buffer import ReplayBuffer
+from dqn.exploration import epsilon_greedy_policy, linear_schedule
+from dqn.networks import QNetwork
+from dqn.replay_buffer import ReplayBuffer
 
 
 class DQNAgent:

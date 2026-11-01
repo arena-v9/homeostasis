@@ -9,7 +9,7 @@ gitignored. Each run gets its own folder of JSON files:
         runs/<run name>/
           run.json            settings (training args, environment config) and final results
           curves.json         evaluation results over training
-          replay.json         recorded episodes at each training stage (layout in replay_viewer.py)
+          replay.json         recorded episodes at each training stage (layout in runs/recording.py)
 
 To look at them, serve the ui folder (`cd ui && python -m http.server 8000`) and open http://localhost:8000/.
 Browsers don't let a page opened straight from disk load the JSON files, so opening index.html directly won't work.
@@ -19,7 +19,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-OUTPUTS_DIR = Path(__file__).parent / "ui" / "outputs"
+OUTPUTS_DIR = Path(__file__).parent.parent / "ui" / "outputs"
 RUNS_DIR = OUTPUTS_DIR / "runs"
 
 

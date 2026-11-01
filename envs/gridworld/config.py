@@ -21,7 +21,7 @@ class Tile(IntEnum):
 class GridworldConfig:
     # Map: a size x size grid with a wall border, so the playable area is (size - 2) x (size - 2)
     size: int = 7
-    num_fire: int = 2  # fire tiles placed at random each episode (see gridworld_layout.py)
+    num_fire: int = 2  # fire tiles placed at random each episode (see envs/gridworld/layout.py)
     npc_enabled: bool = True  # False = the agent is alone (for checking the environment and the agent's learning)
     start_energy_range: tuple[float, float] = (0.5, 1.0)  # each body's starting energy is uniform in this range
 

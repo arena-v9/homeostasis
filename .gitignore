@@ -3,4 +3,3 @@ __pycache__/
 *.pyc
 wandb/
 ui/outputs/
-iframe_figures/

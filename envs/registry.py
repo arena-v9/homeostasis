@@ -8,9 +8,9 @@ from typing import Callable
 
 import torch as t
 
-from batched_gridworld import BatchedGridworld
-from gridworld_config import GridworldConfig
-from probe_envs import Probe1, Probe2, Probe3, Probe4, Probe5
+from envs.gridworld.batched import BatchedGridworld
+from envs.gridworld.config import GridworldConfig
+from envs.probe_envs import Probe1, Probe2, Probe3, Probe4, Probe5
 
 ENVS: dict[str, Callable] = {
     # The agent alone in the gridworld, for checking the environment and that the agent learns to survive

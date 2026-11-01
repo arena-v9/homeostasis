@@ -1,6 +1,6 @@
 """
 Records gridworld episodes for the replay part of the viewer (ui/index.html), in the layout saved as a run's
-replay.json (see run_outputs.py):
+replay.json (see runs/outputs.py):
 
     episodes = record_episodes(act_fn, config, seeds=range(16), device="cpu")
     data = replay_data({"untrained": ..., "after 200k steps": episodes})
@@ -18,7 +18,7 @@ The layout:
           food                [row, col] of each food item
           action, reward      what the agent did from this state and the reward it got (absent on the last frame)
 
-`record_episodes` runs the single-env mechanics (gridworld.step) directly, so it records the true states, including
+`record_episodes` runs the single-env mechanics (envs.gridworld.mechanics.step) directly, so it records the true states, including
 the final state of an episode that ends in death.
 """
 
@@ -27,11 +27,11 @@ from typing import Callable
 import numpy as np
 import torch as t
 
-from batched_gridworld import NpcPolicy, npc_stays
-from gridworld import Action, observe, step
-from gridworld_config import GridworldConfig, Tile
-from gridworld_layout import random_state
-from gridworld_state import Body, GridworldState
+from envs.gridworld.batched import NpcPolicy, npc_stays
+from envs.gridworld.config import GridworldConfig, Tile
+from envs.gridworld.layout import random_state
+from envs.gridworld.mechanics import Action, observe, step
+from envs.gridworld.state import Body, GridworldState
 
 
 def _body(body: Body) -> dict:

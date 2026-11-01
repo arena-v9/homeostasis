@@ -17,9 +17,6 @@ class DQNArgs:
     use_wandb: bool = False
     wandb_project_name: str = "DQN"
     wandb_entity: str | None = None
-    video_log_freq: int | None = None  # number of optimization steps between wandb video upload
-    steps_per_live_video: int | None = 5_000  # number of optimization steps between live video display
-    overwrite_video: bool = True  # older live videos are overwritten by newer ones if True. Otherwise, they are plotted one after the other.
 
     # Duration of different phases / buffer memory settings
     total_timesteps: int = 300_000  # total environment steps (summed over all envs), including buffer filling

@@ -7,9 +7,9 @@ from collections import deque
 
 import numpy as np
 
-from gridworld import ACTION_DELTAS, empty_floor_tiles
-from gridworld_config import GridworldConfig, Tile
-from gridworld_state import Body, GridworldState, Pos
+from envs.gridworld.config import GridworldConfig, Tile
+from envs.gridworld.mechanics import ACTION_DELTAS, empty_floor_tiles
+from envs.gridworld.state import Body, GridworldState, Pos
 
 
 def _reachable(tiles: np.ndarray, start: Pos) -> set[Pos]:

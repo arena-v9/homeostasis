@@ -2,7 +2,7 @@ import torch as t
 from jaxtyping import Float, Int
 from torch import Tensor
 
-from q_network import QNetwork
+from dqn.networks import QNetwork
 
 
 def linear_schedule(

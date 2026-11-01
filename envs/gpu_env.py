@@ -15,7 +15,7 @@ from gymnasium import spaces
 def track_episode_stats(env, reward, terminated, truncated) -> dict:
     """Accumulate per-env episode return/length (on-device) and, on steps where at least one env
     finished, return a `{"final_info": [{"episode": {"r", "l", "t"}}]}` dict, averaged over the
-    envs that finished this step. This is the format `get_episode_data_from_infos` (in dqn_trainer.py)
+    envs that finished this step. This is the format `get_episode_data_from_infos` (in dqn/trainer.py)
     consumes, so episode reward/length show up on the training progress bar and in wandb. The counters
     are lazily attached to the env on first call."""
     done = terminated.bool() | truncated.bool()
@@ -74,13 +74,6 @@ class GPUEnv(ABC):
     @abstractmethod
     def terminated(self):
         """Per-step termination flags, shape (num_envs,) bool, computed from the current state."""
-
-    # --- optional ---
-    def draw(self, obs, canvas, ox, oy, w, h):
-        """OPTIONAL per-cell renderer for the 4x4 grid video (see video.py). Given one environment's `obs`
-        and a cell rectangle (ox, oy, w, h) on a uint8 RGB `canvas` (an H x W x 3 numpy array), draw that
-        env's current state into the cell. An env without `draw()` simply can't be rendered to video."""
-        raise NotImplementedError(f"{type(self).__name__} does not define a draw() renderer")
 
     def close(self):
         pass

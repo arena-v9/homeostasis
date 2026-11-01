@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from gridworld_config import Tile
+from envs.gridworld.config import Tile
 
 Pos = tuple[int, int]  # (row, col), row 0 at the top
 

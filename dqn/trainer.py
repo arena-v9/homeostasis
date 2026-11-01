@@ -5,14 +5,11 @@ import wandb
 from tqdm.auto import tqdm
 
 from common import set_global_seeds
-from conv_q_network import ConvQNetwork
-from dqn_agent import DQNAgent
-from dqn_args import DQNArgs
-from env_registry import make_envs
-from gpu_env import GPUEnv
-from q_network import QNetwork
-from replay_buffer import ReplayBuffer
-from video import LiveVideo, log_greedy_rollout_video
+from dqn.agent import DQNAgent
+from dqn.args import DQNArgs
+from dqn.networks import ConvQNetwork, QNetwork
+from dqn.replay_buffer import ReplayBuffer
+from envs.registry import make_envs
 
 
 def get_episode_data_from_infos(infos: dict) -> dict[str, int | float] | None:
@@ -148,12 +145,6 @@ class DQNTrainer:
         pbar = tqdm(range(self.args.total_training_steps))
         last_logged_time, last_logged_step = time.time(), self.agent.step  # so we don't log too often
 
-        greedy = lambda obs: self.q_network(obs).argmax(-1)
-        fresh_envs = lambda seed: make_envs(self.args.env_id, 16, seed, self.args.device)
-        can_render = isinstance(self.envs, GPUEnv) and type(self.envs).draw is not GPUEnv.draw  # env defines draw()
-        live_videos = can_render and self.args.steps_per_live_video is not None
-        wandb_videos = can_render and self.args.use_wandb and self.args.video_log_freq is not None
-        video_slot = LiveVideo(overwrite=self.args.overwrite_video)  # one display slot per run (see video.LiveVideo)
 
         for step in pbar:
             data = self.add_to_replay_buffer(self.args.steps_per_update)
@@ -167,11 +158,6 @@ class DQNTrainer:
                     pbar.set_postfix(**data)
 
             self.training_step(step)
-
-            live = live_videos and step % self.args.steps_per_live_video == 0
-            to_wandb = wandb_videos and step % self.args.video_log_freq == 0
-            if live or to_wandb:
-                log_greedy_rollout_video(fresh_envs(step), greedy, self.envs.draw, step=self.agent.step, live=live, slot=video_slot)
 
         self.envs.close()
         if self.args.use_wandb:

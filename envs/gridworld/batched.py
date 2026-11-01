@@ -1,9 +1,9 @@
 """
 Runs `num_envs` independent gridworlds behind the batched, tensor-native interface the DQN trainer expects (see
-gpu_env.GPUEnv): `reset()` / `step(actions)` take and return tensors of shape (num_envs, ...), done envs auto-reset
+envs.gpu_env.GPUEnv): `reset()` / `step(actions)` take and return tensors of shape (num_envs, ...), done envs auto-reset
 inside `step`, and the pre-reset observation is reported in `infos["final_observation"]`.
 
-The per-env logic is plain numpy (gridworld.py); this wrapper just loops over envs. On a 7x7 grid each step takes
+The per-env logic is plain numpy (envs/gridworld/mechanics.py); this wrapper just loops over envs. On a 7x7 grid each step takes
 microseconds, so the loop isn't the bottleneck.
 """
 
@@ -14,11 +14,11 @@ import torch as t
 from gymnasium import spaces
 
 from common import device as default_device
-from gpu_env import GPUEnv, track_episode_stats
-from gridworld import CHANNELS, NUM_CHANNELS, Action, observe, step
-from gridworld_config import GridworldConfig
-from gridworld_layout import random_state
-from gridworld_state import GridworldState
+from envs.gpu_env import GPUEnv, track_episode_stats
+from envs.gridworld.config import GridworldConfig
+from envs.gridworld.layout import random_state
+from envs.gridworld.mechanics import NUM_CHANNELS, Action, observe, step
+from envs.gridworld.state import GridworldState
 
 # Chooses the NPC's action from the current state. The scripted NPC comes later; until then it stands still.
 NpcPolicy = Callable[[GridworldState, np.random.Generator], Action]
@@ -94,44 +94,7 @@ class BatchedGridworld(GPUEnv):
         return self._obs(), rewards_t, terminated_t, truncated_t, infos
 
     def reward_function(self, action):
-        raise NotImplementedError("The reward is computed per env in gridworld.step")
+        raise NotImplementedError("The reward is computed per env in envs.gridworld.mechanics.step")
 
     def terminated(self):
         return self._terminated
-
-    def draw(self, obs, canvas, ox, oy, w, h):
-        """Draws one env's observation into a cell of a video frame: walls grey, fire orange, food green, the agent
-        blue and the NPC purple, with the agent's health (red) and energy (yellow) as bars along the top."""
-        import cv2
-
-        obs = np.asarray(obs)
-        ch = {name: obs[i] for i, name in enumerate(CHANNELS)}
-        size = obs.shape[-1]
-        bar_h = max(h // 12, 3)
-        sq = min(w, h - 2 * bar_h) // size
-        x0, y0 = ox + (w - sq * size) // 2, oy + 2 * bar_h + (h - 2 * bar_h - sq * size) // 2
-
-        for r in range(size):
-            for c in range(size):
-                color = (255, 255, 255)
-                if ch["wall"][r, c]:
-                    color = (110, 110, 110)
-                elif ch["fire"][r, c]:
-                    color = (255, 120, 0)
-                elif ch["food"][r, c]:
-                    color = (60, 180, 75)
-                p0, p1 = (x0 + c * sq, y0 + r * sq), (x0 + (c + 1) * sq - 1, y0 + (r + 1) * sq - 1)
-                cv2.rectangle(canvas, p0, p1, color, -1)
-                cv2.rectangle(canvas, p0, p1, (225, 225, 225), 1)
-                if ch["body"][r, c]:
-                    body_color = (40, 90, 220) if ch["self"][r, c] else (150, 60, 200)
-                    center = (x0 + c * sq + sq // 2, y0 + r * sq + sq // 2)
-                    cv2.circle(canvas, center, max(sq // 3, 2), body_color, -1)
-
-        agent = np.argwhere(ch["self"] > 0)
-        if len(agent):
-            r, c = agent[0]
-            for row, (value, color) in enumerate([(ch["health"][r, c], (220, 40, 40)), (ch["energy"][r, c], (230, 190, 0))]):
-                y = oy + row * bar_h
-                cv2.rectangle(canvas, (ox + 2, y + 1), (ox + w - 3, y + bar_h - 1), (230, 230, 230), -1)
-                cv2.rectangle(canvas, (ox + 2, y + 1), (ox + 2 + int((w - 5) * float(value)), y + bar_h - 1), color, -1)
