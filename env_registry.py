@@ -8,9 +8,15 @@ from typing import Callable
 
 import torch as t
 
+from batched_gridworld import BatchedGridworld
+from gridworld_config import GridworldConfig
 from probe_envs import Probe1, Probe2, Probe3, Probe4, Probe5
 
 ENVS: dict[str, Callable] = {
+    # The agent alone in the gridworld, for checking the environment and that the agent learns to survive
+    "Gridworld-solo-v0": lambda num_envs, seed, device: BatchedGridworld(
+        num_envs, seed, device, GridworldConfig(npc_enabled=False)
+    ),
     "Probe1-v0": Probe1,
     "Probe2-v0": Probe2,
     "Probe3-v0": Probe3,

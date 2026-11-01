@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 wandb/
+outputs/
+iframe_figures/

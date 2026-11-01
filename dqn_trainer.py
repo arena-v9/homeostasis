@@ -5,6 +5,7 @@ import wandb
 from tqdm.auto import tqdm
 
 from common import set_global_seeds
+from conv_q_network import ConvQNetwork
 from dqn_agent import DQNAgent
 from dqn_args import DQNArgs
 from env_registry import make_envs
@@ -49,8 +50,10 @@ class DQNTrainer:
         self.buffer = ReplayBuffer(num_envs, obs_shape, action_shape, args.buffer_size, args.seed, args.device)
 
         # Create our networks & optimizer (target network should be initialized with a copy of the Q-network's weights)
-        self.q_network = QNetwork(obs_shape, num_actions).to(args.device)
-        self.target_network = QNetwork(obs_shape, num_actions).to(args.device)
+        # Image observations (channels, height, width) get the gridworld CNN; flat vectors (probe envs) get the MLP
+        network_cls = ConvQNetwork if len(obs_shape) == 3 else QNetwork
+        self.q_network = network_cls(obs_shape, num_actions).to(args.device)
+        self.target_network = network_cls(obs_shape, num_actions).to(args.device)
         self.target_network.load_state_dict(self.q_network.state_dict())
         self.optimizer = t.optim.AdamW(self.q_network.parameters(), lr=args.learning_rate)
 
