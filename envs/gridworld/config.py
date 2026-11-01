@@ -3,7 +3,7 @@ Constants and condition flags for the homeostasis gridworld. Every number in the
 experiment is one `GridworldConfig`. DESIGN.md explains the design and where each choice comes from.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import IntEnum
 
 
@@ -77,6 +77,18 @@ class GridworldConfig:
     def npc_damage(self, tile: Tile) -> float:
         """Health the NPC loses per step standing on `tile`."""
         return self.hazard_damage.get(Tile(tile), (0.0, 0.0))[1]
+
+    def to_dict(self) -> dict:
+        """The config as plain JSON-ready values (tiles in `hazard_damage` by name), e.g. for a run's run.json."""
+        values = asdict(self)
+        values["hazard_damage"] = {Tile(tile).name.lower(): list(damage) for tile, damage in self.hazard_damage.items()}
+        values["start_energy_range"] = list(self.start_energy_range)
+        return values
+
+    def changes_from_defaults(self) -> dict:
+        """The settings that differ from `GridworldConfig()`'s defaults, as JSON-ready values."""
+        defaults = GridworldConfig().to_dict()
+        return {name: value for name, value in self.to_dict().items() if value != defaults[name]}
 
     @property
     def max_drive(self) -> float:

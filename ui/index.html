@@ -91,15 +91,31 @@ h2 { margin: 14px 0 0; font-size: 1.05rem; }
 
 <script>
 // Reads outputs/runs.json (the list of runs) and, for the chosen run, outputs/runs/<name>/run.json, curves.json and
-// replay.json.
-// See runs/outputs.py and runs/recording.py for their layouts. The chosen run is kept in the address (#<run name>).
-const $ = (id) => document.getElementById(id);
-const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-let RUNS = [], current = null, DATA = null, T = null, cp = 0, frame = 0, timer = null;
+// replay.json. See runs/outputs.py and runs/recording.py for their layouts. The chosen run is kept in the address
+// (#<run name>).
 
-const getJson = (url) => fetch(url).then((res) => {
-  if (!res.ok) throw new Error(`${url}: ${res.status} ${res.statusText}`);
-  return res.json();
+// ---- State ----------------------------------------------------------------------------------------------------------
+
+const $ = (id) => document.getElementById(id);
+const cssColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const COLOR_NAMES = ["bg", "cell", "line", "wall", "floor", "grid", "fire", "food", "agent", "npc", "health", "energy",
+  "track", "died", "ok"];
+
+let runList = [];         // entries of runs.json
+let currentRun = null;    // name of the run being shown
+let replay = null;        // the current run's replay.json
+let checkpointIndex = 0;  // which training stage's episodes are playing
+let frameIndex = 0;       // the step shown in every episode
+let playTimer = null;     // setInterval handle while playing
+
+const episodes = () => replay.checkpoints[checkpointIndex].episodes;
+const lastFrameIndex = () => Math.max(...episodes().map((episode) => episode.frames.length)) - 1;
+
+// ---- Loading --------------------------------------------------------------------------------------------------------
+
+const getJson = (url) => fetch(url).then((response) => {
+  if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
+  return response.json();
 });
 
 function showError(message) {
@@ -109,170 +125,250 @@ function showError(message) {
 
 async function loadRun(name) {
   setPlaying(false);
-  current = name;
+  currentRun = name;
   $("run").value = name;
   try {
-    const base = `outputs/runs/${encodeURIComponent(name)}/`;
-    const [info, curves, replay] = await Promise.all(["run", "curves", "replay"].map((f) => getJson(base + f + ".json")));
-    if (current !== name) return;  // another run was picked while this one loaded
+    const runFolder = `outputs/runs/${encodeURIComponent(name)}/`;
+    const [info, curves, runReplay] = await Promise.all(
+      ["run", "curves", "replay"].map((file) => getJson(`${runFolder}${file}.json`)));
+    if (currentRun !== name) return;  // another run was picked while this one loaded
     $("load-msg").hidden = true;
-    $("subtitle").textContent = info.summary || "";
-    const fmt = (v) => (Number.isInteger(v) ? v : v.toFixed(2));
-    $("run-info").textContent = [
-      `created ${info.created}`,
-      info.train_seconds != null && `trained in ${Math.round(info.train_seconds / 60)} min`,
-      info.final && `final survival ${fmt(info.final.survival)} (random ${fmt(info.random.survival)})`,
-    ].filter(Boolean).join(" · ");
+    showRunInfo(info);
     drawCharts(curves);
-    DATA = replay; T = replay.tiles; cp = replay.checkpoints.length - 1; frame = 0;
+    replay = runReplay;
+    checkpointIndex = replay.checkpoints.length - 1;
+    frameIndex = 0;
     $("checkpoint").replaceChildren();
-    replay.checkpoints.forEach((c, i) => $("checkpoint").add(new Option(c.label, i)));
-    $("checkpoint").value = cp;
-    draw();
-  } catch (err) {
-    showError(`Couldn't load run ${name} (${err.message}).`);
+    replay.checkpoints.forEach((checkpoint, index) => $("checkpoint").add(new Option(checkpoint.label, index)));
+    $("checkpoint").value = checkpointIndex;
+    drawReplay();
+  } catch (error) {
+    showError(`Couldn't load run ${name} (${error.message}).`);
   }
 }
+
+function showRunInfo(info) {
+  const format = (value) => (Number.isInteger(value) ? value : value.toFixed(2));
+  $("subtitle").textContent = info.summary || "";
+  $("run-info").textContent = [
+    `created ${info.created}`,
+    info.train_seconds != null && `trained in ${Math.round(info.train_seconds / 60)} min`,
+    info.final && `final survival ${format(info.final.survival)} (random ${format(info.random.survival)})`,
+  ].filter(Boolean).join(" · ");
+}
+
+// ---- Learning curves ------------------------------------------------------------------------------------------------
 
 // One small line chart per metric: the greedy policy over training, and the random policy as a dashed line.
 function drawCharts(curves) {
-  const box = $("charts"), NS = "http://www.w3.org/2000/svg";
-  box.replaceChildren();
-  const xs = curves.history.map((h) => h.env_steps), xMax = Math.max(...xs, 1);
-  const W = 320, H = 130, pad = { l: 34, r: 8, t: 6, b: 16 };
-  const el = (tag, attrs, parent) => {
-    const e = document.createElementNS(NS, tag);
-    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
-    parent.append(e); return e;
+  const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+  const WIDTH = 320, HEIGHT = 130, PADDING = { left: 34, right: 8, top: 6, bottom: 16 };
+  const addSvg = (tag, attributes, parent) => {
+    const element = document.createElementNS(SVG_NAMESPACE, tag);
+    for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+    parent.append(element);
+    return element;
   };
-  for (const [key, label] of Object.entries(curves.metrics)) {
-    const ys = curves.history.map((h) => h[key]), base = curves.random[key];
-    let lo = Math.min(...ys, base), hi = Math.max(...ys, base);
-    if (key === "survival") { lo = 0; hi = 1; }
-    if (hi === lo) hi = lo + 1;
-    const X = (x) => pad.l + (W - pad.l - pad.r) * (x / xMax);
-    const Y = (y) => pad.t + (H - pad.t - pad.b) * (1 - (y - lo) / (hi - lo));
-    const div = document.createElement("div"); div.className = "chart";
-    const head = document.createElement("div"); head.className = "head";
-    const last = ys[ys.length - 1];
-    head.innerHTML = `<span></span><span class="num"></span>`;
-    head.children[0].textContent = label;
-    head.children[1].textContent = `final ${last.toFixed(2)} · random ${base.toFixed(2)}`;
-    div.append(head);
-    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": label }, div);
-    for (const v of [lo, hi]) {
-      el("line", { x1: pad.l, x2: W - pad.r, y1: Y(v), y2: Y(v), style: "stroke:var(--line)" }, svg);
-      el("text", { x: pad.l - 4, y: Y(v) + 3, "text-anchor": "end" }, svg).textContent = +v.toFixed(2);
+  const container = $("charts");
+  container.replaceChildren();
+  const envSteps = curves.history.map((evaluation) => evaluation.env_steps);
+  const maxEnvSteps = Math.max(...envSteps, 1);
+
+  for (const [metric, label] of Object.entries(curves.metrics)) {
+    const values = curves.history.map((evaluation) => evaluation[metric]);
+    const randomValue = curves.random[metric];
+    let low = Math.min(...values, randomValue), high = Math.max(...values, randomValue);
+    if (metric === "survival") { low = 0; high = 1; }
+    if (high === low) high = low + 1;
+    const toX = (steps) => PADDING.left + (WIDTH - PADDING.left - PADDING.right) * (steps / maxEnvSteps);
+    const toY = (value) => PADDING.top + (HEIGHT - PADDING.top - PADDING.bottom) * (1 - (value - low) / (high - low));
+
+    const chart = document.createElement("div");
+    chart.className = "chart";
+    const heading = document.createElement("div");
+    heading.className = "head";
+    heading.innerHTML = `<span></span><span class="num"></span>`;
+    heading.children[0].textContent = label;
+    const finalValue = values[values.length - 1];
+    heading.children[1].textContent = `final ${finalValue.toFixed(2)} · random ${randomValue.toFixed(2)}`;
+    chart.append(heading);
+
+    const svg = addSvg("svg", { viewBox: `0 0 ${WIDTH} ${HEIGHT}`, role: "img", "aria-label": label }, chart);
+    const right = WIDTH - PADDING.right;
+    for (const value of [low, high]) {
+      addSvg("line", { x1: PADDING.left, x2: right, y1: toY(value), y2: toY(value), style: "stroke:var(--line)" }, svg);
+      const axisLabel = addSvg("text", { x: PADDING.left - 4, y: toY(value) + 3, "text-anchor": "end" }, svg);
+      axisLabel.textContent = +value.toFixed(2);
     }
-    el("text", { x: pad.l, y: H - 3 }, svg).textContent = "0";
-    el("text", { x: W - pad.r, y: H - 3, "text-anchor": "end" }, svg).textContent = `${Math.round(xMax / 1000)}k env steps`;
-    el("line", { x1: pad.l, x2: W - pad.r, y1: Y(base), y2: Y(base),
-                 style: "stroke:var(--muted);stroke-dasharray:4 3" }, svg);
-    el("polyline", { points: xs.map((x, i) => `${X(x)},${Y(ys[i])}`).join(" "),
-                     style: "fill:none;stroke:var(--agent);stroke-width:1.5" }, svg);
-    box.append(div);
+    addSvg("text", { x: PADDING.left, y: HEIGHT - 3 }, svg).textContent = "0";
+    addSvg("text", { x: right, y: HEIGHT - 3, "text-anchor": "end" }, svg).textContent =
+      `${Math.round(maxEnvSteps / 1000)}k env steps`;
+    addSvg("line", { x1: PADDING.left, x2: right, y1: toY(randomValue), y2: toY(randomValue),
+                     style: "stroke:var(--muted);stroke-dasharray:4 3" }, svg);
+    addSvg("polyline", { points: envSteps.map((steps, index) => `${toX(steps)},${toY(values[index])}`).join(" "),
+                         style: "fill:none;stroke:var(--agent);stroke-width:1.5" }, svg);
+    container.append(chart);
   }
 }
+
+// ---- Replays --------------------------------------------------------------------------------------------------------
+
+// One episode's cell: health and energy bars on top, then the grid. An episode that has ended stays on its last frame
+// with a label.
+function drawEpisode(context, episode, cellX, cellY, cellWidth, cellHeight, colors) {
+  const lastFrame = episode.frames.length - 1;
+  const frame = episode.frames[Math.min(frameIndex, lastFrame)];
+  const MARGIN = 4, BAR_GAP = 3, barHeight = Math.round(cellHeight * 0.07);
+
+  [[frame.agent.health, colors.health], [frame.agent.energy, colors.energy]].forEach(([value, color], row) => {
+    const barY = cellY + MARGIN + row * (barHeight + BAR_GAP);
+    const barWidth = cellWidth - 2 * MARGIN;
+    context.fillStyle = colors.track;
+    context.fillRect(cellX + MARGIN, barY, barWidth, barHeight);
+    context.fillStyle = color;
+    context.fillRect(cellX + MARGIN, barY, barWidth * Math.max(0, Math.min(1, value)), barHeight);
+  });
+
+  const gridTop = cellY + MARGIN + 2 * (barHeight + BAR_GAP) + 2;
+  const gridSize = episode.tiles.length;
+  const square = Math.floor(Math.min(cellWidth - 2 * MARGIN, cellY + cellHeight - MARGIN - gridTop) / gridSize);
+  const gridLeft = cellX + (cellWidth - square * gridSize) / 2;
+  const squareX = (col) => gridLeft + col * square, squareY = (row) => gridTop + row * square;
+
+  for (let row = 0; row < gridSize; row++) {
+    for (let col = 0; col < gridSize; col++) {
+      const tile = episode.tiles[row][col];
+      const isWall = tile === replay.tiles.wall, isFire = tile === replay.tiles.fire;
+      context.fillStyle = isWall ? colors.wall : isFire ? colors.fire : colors.floor;
+      context.fillRect(squareX(col), squareY(row), square, square);
+      context.strokeStyle = colors.grid;
+      context.strokeRect(squareX(col) + 0.5, squareY(row) + 0.5, square - 1, square - 1);
+    }
+  }
+  for (const [row, col] of frame.food) {
+    context.fillStyle = colors.food;
+    context.fillRect(squareX(col), squareY(row), square, square);
+  }
+  const drawBody = ([row, col], color) => {
+    context.fillStyle = color;
+    context.beginPath();
+    context.arc(squareX(col) + square / 2, squareY(row) + square / 2, square / 3, 0, Math.PI * 2);
+    context.fill();
+  };
+  if (frame.npc) drawBody(frame.npc.pos, colors.npc);
+  drawBody(frame.agent.pos, colors.agent);
+
+  if (frameIndex >= lastFrame) {
+    const died = episode.outcome === "died";
+    const text = died ? `died at step ${lastFrame}` : episode.outcome;
+    context.font = `600 ${Math.max(11, Math.round(square * 0.55))}px system-ui, sans-serif`;
+    const textWidth = context.measureText(text).width, textY = gridTop + (square * gridSize) / 2;
+    context.fillStyle = colors.bg;
+    context.globalAlpha = 0.85;
+    context.fillRect(cellX + (cellWidth - textWidth) / 2 - 6, textY - square * 0.45, textWidth + 12, square * 0.9);
+    context.globalAlpha = 1;
+    context.fillStyle = died ? colors.died : colors.ok;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(text, cellX + cellWidth / 2, textY);
+    context.textAlign = "start";
+    context.textBaseline = "alphabetic";
+  }
+}
+
+// All episodes of the current training stage, side by side, at the current step.
+function drawReplay() {
+  if (!replay) return;
+  const canvas = $("view"), pixelRatio = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth, height = canvas.clientHeight;
+  canvas.width = width * pixelRatio;
+  canvas.height = height * pixelRatio;
+  const context = canvas.getContext("2d");
+  context.scale(pixelRatio, pixelRatio);
+  const colors = Object.fromEntries(COLOR_NAMES.map((name) => [name, cssColor(`--${name}`)]));
+  context.fillStyle = colors.bg;
+  context.fillRect(0, 0, width, height);
+
+  const shown = episodes();
+  const columns = Math.ceil(Math.sqrt(shown.length)), rows = Math.ceil(shown.length / columns);
+  const cellWidth = width / columns, cellHeight = height / rows;
+  shown.forEach((episode, index) => {
+    const cellX = (index % columns) * cellWidth, cellY = Math.floor(index / columns) * cellHeight;
+    context.fillStyle = colors.cell;
+    context.fillRect(cellX, cellY, cellWidth, cellHeight);
+    context.strokeStyle = colors.line;
+    context.lineWidth = 1;
+    context.strokeRect(cellX + 0.5, cellY + 0.5, cellWidth - 1, cellHeight - 1);
+    drawEpisode(context, episode, cellX, cellY, cellWidth, cellHeight, colors);
+  });
+
+  $("scrub").max = lastFrameIndex();
+  $("scrub").value = frameIndex;
+  $("step").textContent = `step ${frameIndex} / ${lastFrameIndex()}`;
+  const survived = shown.filter((episode) => episode.outcome === "survived").length;
+  $("summary").textContent = `${survived} of ${shown.length} episodes survived`;
+}
+
+// ---- Playback and controls ------------------------------------------------------------------------------------------
+
+function setPlaying(on) {
+  clearInterval(playTimer);
+  playTimer = null;
+  $("play").textContent = on ? "Pause" : "Play";
+  if (!on) return;
+  if (frameIndex >= lastFrameIndex()) frameIndex = 0;
+  playTimer = setInterval(() => {
+    if (frameIndex >= lastFrameIndex()) return setPlaying(false);
+    frameIndex++;
+    drawReplay();
+  }, 1000 / Number($("speed").value));
+}
+
+function showFrame(index) {
+  setPlaying(false);
+  frameIndex = Math.max(0, Math.min(lastFrameIndex(), index));
+  drawReplay();
+}
+
+$("run").onchange = (event) => { location.hash = encodeURIComponent(event.target.value); };
+window.addEventListener("hashchange", () => {
+  const name = decodeURIComponent(location.hash.slice(1));
+  if (runList.some((run) => run.name === name) && name !== currentRun) loadRun(name);
+});
+$("checkpoint").onchange = (event) => {
+  checkpointIndex = Number(event.target.value);
+  showFrame(0);
+};
+$("play").onclick = () => setPlaying(!playTimer);
+$("scrub").oninput = (event) => showFrame(Number(event.target.value));
+$("speed").onchange = () => { if (playTimer) setPlaying(true); };
+document.addEventListener("keydown", (event) => {
+  if (!replay) return;
+  if (event.key === " " && document.activeElement.tagName !== "SELECT") {
+    event.preventDefault();
+    setPlaying(!playTimer);
+  } else if (event.key === "ArrowRight") {
+    showFrame(frameIndex + 1);
+  } else if (event.key === "ArrowLeft") {
+    showFrame(frameIndex - 1);
+  }
+});
+window.addEventListener("resize", drawReplay);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawReplay);
+const themeObserver = new MutationObserver(drawReplay);
+themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+// ---- Start ----------------------------------------------------------------------------------------------------------
 
 getJson("outputs/runs.json")
   .then((runs) => {
-    RUNS = runs;
-    if (!runs.length) return showError("No runs yet. Train one with train_gridworld_solo.py.");
-    runs.forEach((r) => $("run").add(new Option(r.title ? `${r.title} (${r.name})` : r.name, r.name)));
+    runList = runs;
+    if (!runs.length) return showError("No runs yet. Train one with train_gridworld.py.");
+    runs.forEach((run) => $("run").add(new Option(run.title ? `${run.title} (${run.name})` : run.name, run.name)));
     $("viewer").hidden = false;
-    const wanted = decodeURIComponent(location.hash.slice(1));
-    loadRun(runs.some((r) => r.name === wanted) ? wanted : runs[0].name);
+    const requested = decodeURIComponent(location.hash.slice(1));
+    loadRun(runs.some((run) => run.name === requested) ? requested : runs[0].name);
   })
-  .catch((err) => showError(`Couldn't load the list of runs (${err.message}). Pages opened straight from disk can't ` +
-    "load files: serve the ui folder (`cd ui && python -m http.server 8000`) and open http://localhost:8000/."));
-$("run").onchange = (e) => { location.hash = encodeURIComponent(e.target.value); };
-window.addEventListener("hashchange", () => {
-  const name = decodeURIComponent(location.hash.slice(1));
-  if (RUNS.some((r) => r.name === name) && name !== current) loadRun(name);
-});
-
-const episodes = () => DATA.checkpoints[cp].episodes;
-const longest = () => Math.max(...episodes().map((e) => e.frames.length)) - 1;
-
-// One cell: two bars on top, then the grid. An episode that has ended stays on its last frame with a label.
-function drawCell(ctx, ep, x0, y0, w, h, c) {
-  const last = ep.frames.length - 1, f = ep.frames[Math.min(frame, last)], ended = frame >= last;
-  const barH = Math.round(h * 0.07), gap = 3;
-  [[f.agent.health, c.health], [f.agent.energy, c.energy]].forEach(([v, col], k) => {
-    const y = y0 + 4 + k * (barH + gap);
-    ctx.fillStyle = c.track; ctx.fillRect(x0 + 4, y, w - 8, barH);
-    ctx.fillStyle = col; ctx.fillRect(x0 + 4, y, (w - 8) * Math.max(0, Math.min(1, v)), barH);
-  });
-  const top = y0 + 4 + 2 * (barH + gap) + 2, n = ep.tiles.length;
-  const sq = Math.floor(Math.min(w - 8, y0 + h - 4 - top) / n), gx = x0 + (w - sq * n) / 2;
-  for (let r = 0; r < n; r++) for (let col = 0; col < n; col++) {
-    const tile = ep.tiles[r][col];
-    ctx.fillStyle = tile === T.wall ? c.wall : tile === T.fire ? c.fire : c.floor;
-    ctx.fillRect(gx + col * sq, top + r * sq, sq, sq);
-    ctx.strokeStyle = c.grid; ctx.strokeRect(gx + col * sq + 0.5, top + r * sq + 0.5, sq - 1, sq - 1);
-  }
-  for (const [r, col] of f.food) { ctx.fillStyle = c.food; ctx.fillRect(gx + col * sq, top + r * sq, sq, sq); }
-  const body = (r, col, color) => {
-    ctx.fillStyle = color; ctx.beginPath();
-    ctx.arc(gx + col * sq + sq / 2, top + r * sq + sq / 2, sq / 3, 0, Math.PI * 2); ctx.fill();
-  };
-  if (f.npc) body(f.npc.pos[0], f.npc.pos[1], c.npc);
-  body(f.agent.pos[0], f.agent.pos[1], c.agent);
-  if (ended) {
-    const died = ep.outcome === "died";
-    const text = died ? `died at step ${last}` : ep.outcome;
-    ctx.font = `600 ${Math.max(11, Math.round(sq * 0.55))}px system-ui, sans-serif`;
-    const tw = ctx.measureText(text).width, ty = top + (sq * n) / 2;
-    ctx.fillStyle = c.bg; ctx.globalAlpha = 0.85;
-    ctx.fillRect(x0 + (w - tw) / 2 - 6, ty - sq * 0.45, tw + 12, sq * 0.9); ctx.globalAlpha = 1;
-    ctx.fillStyle = died ? c.died : c.ok; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(text, x0 + w / 2, ty); ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
-  }
-}
-
-function draw() {
-  if (!DATA) return;
-  const cv = $("view"), dpr = window.devicePixelRatio || 1;
-  const W = cv.clientWidth, H = cv.clientHeight;
-  cv.width = W * dpr; cv.height = H * dpr;
-  const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
-  const c = Object.fromEntries(["bg", "cell", "line", "wall", "floor", "grid", "fire", "food", "agent", "npc",
-    "health", "energy", "track", "died", "ok"].map((k) => [k, css(`--${k}`)]));
-  ctx.fillStyle = c.bg; ctx.fillRect(0, 0, W, H);
-  const eps = episodes(), cols = Math.ceil(Math.sqrt(eps.length)), rows = Math.ceil(eps.length / cols);
-  const cw = W / cols, ch = H / rows;
-  eps.forEach((ep, i) => {
-    const x = (i % cols) * cw, y = Math.floor(i / cols) * ch;
-    ctx.fillStyle = c.cell; ctx.fillRect(x, y, cw, ch);
-    ctx.strokeStyle = c.line; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, cw - 1, ch - 1);
-    drawCell(ctx, ep, x, y, cw, ch, c);
-  });
-  $("scrub").max = longest(); $("scrub").value = frame;
-  $("step").textContent = `step ${frame} / ${longest()}`;
-  const survived = eps.filter((e) => e.outcome === "survived").length;
-  $("summary").textContent = `${survived} of ${eps.length} episodes survived`;
-}
-
-function setPlaying(on) {
-  clearInterval(timer); timer = null;
-  $("play").textContent = on ? "Pause" : "Play";
-  if (!on) return;
-  if (frame >= longest()) frame = 0;
-  timer = setInterval(() => { if (frame >= longest()) return setPlaying(false); frame++; draw(); },
-    1000 / Number($("speed").value));
-}
-
-$("checkpoint").onchange = (e) => { cp = Number(e.target.value); frame = 0; setPlaying(false); draw(); };
-$("play").onclick = () => setPlaying(!timer);
-$("scrub").oninput = (e) => { setPlaying(false); frame = Number(e.target.value); draw(); };
-$("speed").onchange = () => { if (timer) setPlaying(true); };
-document.addEventListener("keydown", (e) => {
-  if (!DATA || document.activeElement.tagName === "INPUT" && document.activeElement.type === "file") return;
-  if (e.key === " " && document.activeElement.tagName !== "SELECT") { e.preventDefault(); setPlaying(!timer); }
-  else if (e.key === "ArrowRight") { setPlaying(false); frame = Math.min(longest(), frame + 1); draw(); }
-  else if (e.key === "ArrowLeft") { setPlaying(false); frame = Math.max(0, frame - 1); draw(); }
-});
-window.addEventListener("resize", draw);
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
-new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  .catch((error) => showError(`Couldn't load the list of runs (${error.message}). Pages opened straight from disk ` +
+    "can't load files: serve the ui folder (`cd ui && python -m http.server 8000`) and open http://localhost:8000/."));
 </script>

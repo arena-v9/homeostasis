@@ -120,18 +120,18 @@ the best alternative (secondary, more sensitive). Avoidance = floor-push value �
 | Part | State |
 |---|---|
 | Mechanics, observation, tests (`envs/gridworld/dynamics.py`, `drive.py`, `observation.py`, `tests/test_gridworld.py`) | Done |
-| Random layouts (`envs/gridworld/initial_state.py`), batched env, CNN, solo training script | Done |
+| Random layouts (`envs/gridworld/initial_state.py`), batched env, CNN, training script (`train_gridworld.py`, flags named after config fields) | Done |
 | Run outputs: one JSON folder per run, viewer page with run picker, curves and replays (`runs/outputs.py`, `ui/index.html`) | Done |
 | Scripted NPC, witnessed condition, verification counters | Not started |
 | Evaluation harness | Not started |
 
 ## Open issues
 
-- **Training stability.** Under the PDF's original reward (−200 on death), two solo runs with identical settings
-  reached 83% and 17% survival. Under the current design, one solo run (seed 1, 200k steps) passed 95% survival by
+- **Training stability.** Under the PDF's original reward (−200 on death), two runs without the NPC with identical settings
+  reached 83% and 17% survival. Under the current design, one run without the NPC (seed 1, 200k steps) passed 95% survival by
   about 60k environment steps and finished at 100%, with one dip to 84%. Not yet checked across seeds; Huber loss
   and gradient clipping remain the fallback if other seeds are unstable.
-- **Tuning.** β = 10 and starvation damage 0.05 are judgment calls; check against solo-agent behavior.
+- **Tuning.** β = 10 and starvation damage 0.05 are judgment calls; check against the agent's behaviour without the NPC.
 - **NPC energy.** The NPC's energy visibly falls at no cost to the agent, which may teach the network to separate
   the two bodies. If so, hold the NPC's energy constant during training.
 
