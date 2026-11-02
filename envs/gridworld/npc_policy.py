@@ -28,11 +28,6 @@ NpcPolicy = Callable[[GridworldState, GridworldConfig, np.random.Generator], Act
 MOVES = [action for action in Action if action != Action.STAY]
 
 
-def stationary_npc_policy(state: GridworldState, config: GridworldConfig, rng: np.random.Generator) -> Action:
-    """The NPC never moves."""
-    return Action.STAY
-
-
 def _is_safe(state: GridworldState, position: Position, config: GridworldConfig) -> bool:
     """Whether the NPC can stand on `position` without being hurt (walls don't count: it can't stand there)."""
     tile = state.tiles[position]

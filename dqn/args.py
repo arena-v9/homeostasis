@@ -11,16 +11,12 @@ class DQNArgs:
     seed: int = 1
     device: str = device
 
-    # Wandb / logging
-    use_wandb: bool = False
-    wandb_project_name: str = "DQN"
-    wandb_entity: str | None = None
-
     # Duration of different phases / buffer memory settings
     total_timesteps: int = 300_000  # total environment steps (summed over all envs), including buffer filling
     steps_per_update: int = 1  # calls to `agent.play_step` (each = num_envs environment steps) per optimization step
     trains_per_target_update: int = 50  # optimization steps between target network updates
     buffer_size: int = 10_000  # replay buffer capacity, in transitions
+    buffer_death_share: float = 0.0  # share of each batch taken from a store of deaths; see ReplayBuffer
     # Environment steps (with random actions) that fill the buffer before training starts. None means buffer_size.
     learning_starts: int | None = None
 

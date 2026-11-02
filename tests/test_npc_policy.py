@@ -169,9 +169,9 @@ def test_npc_deaths_are_reported():
     obs, _ = env.reset()
     deaths = 0
     for _ in range(300):
-        npc_was_alive = t.tensor([state.npc.alive for state in env.states])
+        npc_was_alive = t.tensor([episode.state.npc.alive for episode in env.episodes])
         obs, _, terminated, truncated, infos = env.step(t.randint(0, 5, (16,)))
-        npc_now_alive = t.tensor([state.npc.alive for state in env.states])
+        npc_now_alive = t.tensor([episode.state.npc.alive for episode in env.episodes])
         continuing = ~(terminated | truncated)
         assert (infos["npc_died"] <= npc_was_alive).all()
         assert (infos["npc_died"][continuing] == (npc_was_alive & ~npc_now_alive)[continuing]).all()

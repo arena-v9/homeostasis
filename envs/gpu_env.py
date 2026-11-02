@@ -16,7 +16,7 @@ def track_episode_stats(env, reward, terminated, truncated) -> dict:
     """Accumulate per-env episode return/length (on-device) and, on steps where at least one env
     finished, return a `{"final_info": [{"episode": {"r", "l", "t"}}]}` dict, averaged over the
     envs that finished this step. This is the format `get_episode_data_from_infos` (in dqn/trainer.py)
-    consumes, so episode reward/length show up on the training progress bar and in wandb. The counters
+    consumes, so episode reward/length show up on the training progress bar. The counters
     are lazily attached to the env on first call."""
     done = terminated.bool() | truncated.bool()
     if not hasattr(env, "_ep_return"):
@@ -50,9 +50,6 @@ class GPUEnv(ABC):
     It defines just the slice of the gymnasium vector-env API that our DQN actually uses -
     `reset()` / `step()` returning tensors, plus `num_envs`, `single_observation_space` and
     `single_action_space` - so these environments do NOT need to inherit from `gym.Env`.
-
-    `reward_function` and `terminated` are separate methods that `step` calls, rather than being
-    inlined into `step`, so the reward is easy to override in a subclass without touching the dynamics.
     """
 
     num_envs: int
@@ -66,14 +63,6 @@ class GPUEnv(ABC):
     @abstractmethod
     def step(self, action):
         """Advance one step; return (obs, reward, terminated, truncated, info) as tensors."""
-
-    @abstractmethod
-    def reward_function(self, action):
-        """Per-step reward, shape (num_envs,). Override this to substitute a shaped reward."""
-
-    @abstractmethod
-    def terminated(self):
-        """Per-step termination flags, shape (num_envs,) bool, computed from the current state."""
 
     def close(self):
         pass

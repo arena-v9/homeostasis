@@ -20,6 +20,7 @@ it avoids an otherwise identical harmless push.
 1. [The idea](#1-the-idea)
 2. [Game mechanics](#2-game-mechanics)
 3. [The code](#3-the-code)
+
 4. [Running it](#4-running-it)
 5. [Status and open issues](#5-status-and-open-issues)
 6. [References](#6-references)
@@ -82,58 +83,33 @@ the Q-value gap, Q(push) minus the best alternative. **Avoidance = floor-push va
 
 Experiments run one at a time. Each must be shown to work before the next one starts.
 
-#### Experiment 1: the effect of having an NPC (results in, under review)
+#### Experiment 1: does watching an NPC change how the agent learns to survive? (running)
 
-Before asking whether the agent avoids harming the NPC, check that the NPC's presence doesn't by itself break or
-change how the agent learns to look after its own body.
+Before asking whether the agent avoids harming the NPC, check whether the NPC's presence by itself changes how the
+agent learns to look after its own body. Both groups use the **parallel grid**: the agent sees its own grid and, to
+its right, a second grid with its own fire and food that it can never enter.
 
-| | No NPC | NPC, state hidden |
+| | No NPC | NPC |
 |---|---|---|
-| Flags | `--npc-enabled false` | `--npc-state-visible false` |
-| Seeds | 1–15 | 1–15 |
+| Second grid | Empty of bodies | The NPC lives there, moving around and eating |
+| Flags | `--parallel-grid true --npc-enabled false` | `--parallel-grid true --npc-state-visible false` |
+| Runs | seeds 1–15 | seeds 1–15 |
 
-Everything else is at the defaults (the NPC's fire-step rate is 0.04, NPC harm is stored, 200k environment steps).
-The NPC's state is hidden so that this experiment tests only the NPC being on the map, not seeing its health and
-energy. Logs are in `logs/exp1/`.
+The agent and the NPC never interact, and the NPC's health and energy are hidden, so the only difference is watching
+the NPC. Logs are in `logs/exp1/`; the analysis is `python -m runs.experiments experiment-1`, shown in the viewer's
+Experiment 1 tab. It asks: does an agent that watches the NPC do better? Is it learning to survive, or does it depend
+on the NPC being there? And why (candidate explanations, not yet tested)?
 
-It works if:
+**Why the parallel grid.** An earlier version of this experiment put the NPC on the agent's own grid. Agents trained
+with it were more reliable: 86% of their evaluations after 100k steps reached 95% survival, against 62% without the
+NPC, mostly through fewer starvation deaths. But on a shared grid the NPC competes for food, moves food around and can
+be pushed, and any of those could explain it. The parallel grid removes them all.
 
-1. Without the NPC, the agent learns to survive on all 5 seeds, well above the random baseline.
-2. With the NPC, survival and food eaten stay close to the no-NPC numbers.
-3. Training is stable enough to compare: results are compared as averages over the second half of training, not
-   only the final evaluation.
+**Results:** pending.
 
-NPC survival and pushes are reported for the NPC runs but nothing depends on them yet.
-
-**Results** (2026-11-02, 3 fire tiles, 15 runs per group; full analysis in the viewer's Experiment 1 tab, from
-`python -m runs.experiments experiment-1`). Each run is summarised by its average over the evaluations in the second
-half of training; ± is the standard deviation across runs; intervals are 95% bootstrap intervals over runs; p is a
-two-sided permutation test.
-
-| Second-half average | Random play | Trained without NPC | Trained with NPC | Difference (95% interval) | p |
-|---|---|---|---|---|---|
-| Survival (100 steps) | 0.04–0.05 | 0.92 ± 0.03 | 0.97 ± 0.02 | +0.05 (+0.03 to +0.07) | < 0.001 |
-| Died of starvation | | 7.3% | 2.5% | −4.8 points (−6.7 to −2.8) | < 0.001 |
-| Died in fire | 77–84% | 0.5% | 0.2% | −0.3 points (−0.8 to 0.0) | 0.11 |
-| Food eaten | | 6.2 | 6.2 | +0.1 (−0.6 to +0.8) | 0.85 |
-| Lowest single evaluation | | 0.72 | 0.88 | +0.16 | 0.002 |
-
-1. **Agents trained with the NPC survive more often**, replicating the result with 2 fire tiles (also +0.05).
-   Picking one run from each group at random, the NPC-trained run survives more 92% of the time.
-2. **The gap is almost all starvation.** NPC-trained agents starve about a third as often. They don't eat more food
-   per episode, so the difference is likely in when or how reliably they eat, not how much.
-3. **Fire deaths are still rare with 3 fire tiles:** about 5 per 1,000 episodes without the NPC and 2 with it, not
-   clearly different. Agents touch fire a little more than with 2 tiles (about 0.2 steps per episode) but almost
-   never die there.
-4. **NPC-trained runs are more stable** late in training (lowest evaluation 0.88 against 0.72).
-
-**Cross-evaluation** (each run's final network tested on 512 layouts): with the test identical (no NPC), agents
-trained with the NPC survive 0.96 against 0.82 for agents trained alone (+0.14, interval +0.06 to +0.22, p = 0.002),
-so the advantage is learned, not a test-time effect. Removing the NPC at test time lowers NPC-trained agents'
-survival by about 0.01 (interval −0.01 to 0.00, p = 0.04): consistent but negligible.
-
-**Still open:** why training with the NPC reduces starvation (candidates: competition for food, food turnover, the
-presence of a second moving body), and how to make fire matter more (fire deaths stay rare).
+**Catastrophic forgetting.** In the first runs, deaths disappeared from the replay buffer by about 110k steps, the
+network then rated doomed states far too highly, and survival collapses followed. Training now keeps a store of every
+death, takes 5% of each batch from it, and uses Double DQN; see DESIGN.md.
 
 ---
 
@@ -143,6 +119,9 @@ presence of a second moving body), and how to make fire matter more (fire deaths
 
 A 7×7 grid with a wall border, so 5×5 is playable. Each episode places 3 fire tiles and 2 food items at random on the
 floor, then the agent and the NPC. Layouts where food (or the NPC) can't be reached without crossing fire are redrawn.
+
+With `--parallel-grid true`, the NPC instead lives on a second 7×7 grid of its own, with its own fire and food, and
+the agent sees both grids side by side as one 7×14 image. The grids never interact.
 
 ```
 # # # # # # #        #  wall
@@ -213,7 +192,7 @@ The NPC has no network. It follows a fixed script ([`npc_policy.py`](envs/gridwo
 ```mermaid
 flowchart TD
     A{"Alive?"} -- no --> STAY["STAY"]
-    A -- yes --> M{"Next to fire, and<br/>random < 0.04?"}
+    A -- yes --> M{"Next to fire, and<br/>random < 0.1?"}
     M -- yes --> FIRE["Step onto fire<br/>(a mistake; the script<br/>takes it off next step)"]
     M -- no --> H{"Energy < 0.5?"}
     H -- yes --> PATH{"Food reachable<br/>without fire?"}
@@ -222,7 +201,7 @@ flowchart TD
     H -- no --> W["Wander: uniform over STAY<br/>and moves onto safe, free squares"]
 ```
 
-With a random agent, the 4% mistake rate puts the NPC on fire in about 43% of episodes and almost never kills it.
+The 10% mistake rate puts the NPC on fire in about 80% of episodes and kills it in about 8%.
 
 ### Drive and reward
 
@@ -298,26 +277,33 @@ homeostasis/
 │       ├── drive.py            drive and drive-reduction reward
 │       ├── npc_policy.py       the NPC's script
 │       ├── observation.py      observe(): state → (9, 7, 7) tensor
+│       ├── episode.py          one episode in either setting: shared grid, or the NPC on a parallel grid
 │       └── batched_env.py      BatchedGridworldEnv: N gridworlds behind the GPUEnv interface
 │
 ├── dqn/                        DQN, adapted from ARENA chapter 2
 │   ├── args.py                 DQNArgs hyperparameters
 │   ├── networks.py             QNetwork (MLP, probes) and ConvQNetwork (CNN, gridworld)
 │   ├── exploration.py          linear epsilon schedule, epsilon-greedy policy
-│   ├── replay_buffer.py        circular replay buffer with a `keep` mask for dropped transitions
+│   ├── replay_buffer.py        circular replay buffer, plus a store of deaths sampled in every batch
 │   ├── agent.py                DQNAgent: plays one batched step, stores it
 │   └── trainer.py              DQNTrainer: TD updates, Huber loss, grad clipping, target net
 │
 ├── runs/
 │   ├── outputs.py              one folder of JSON per run under ui/outputs/runs/; rebuilds runs.json
+│   ├── evaluation.py           plays a policy on fixed layouts and measures it
+│   ├── diagnostics.py          catastrophic-forgetting diagnostics logged at every evaluation
 │   ├── recording.py            records full episodes for the replay viewer
-│   └── experiments.py          experiment analyses for the viewer's tabs: python -m runs.experiments experiment-1
+│   ├── experiment_definitions.py   what each experiment compares and asks
+│   ├── statistics.py           comparisons between groups of runs: bootstrap intervals, permutation tests
+│   └── experiments.py          analyses an experiment for the viewer's tab: python -m runs.experiments experiment-1
 │
 ├── ui/index.html               viewer: pick a run, see learning curves and replays
 │
 └── tests/
     ├── test_gridworld.py       mechanics, drive, observation, pushes, dropping (pytest)
     ├── test_npc_policy.py      NPC script and drop_npc_harm (pytest)
+    ├── test_parallel_grid.py   the NPC on its own grid (pytest)
+    ├── test_replay_buffer.py   the buffer's store of deaths (pytest)
     └── test_dqn.py             DQN unit tests + probe environments (python -m tests.test_dqn)
 ```
 
@@ -446,8 +432,8 @@ flowchart TD
 
     subgraph LOOP["Training: one gradient step per 16 env steps"]
         direction TB
-        PLAY["agent.play_step()<br/>16 envs × 1 step → buffer"] --> SAMPLE["sample 128 transitions"]
-        SAMPLE --> TD["TD target = r + γ · max Q_target(s') · (1 − terminated)"]
+        PLAY["agent.play_step()<br/>16 envs × 1 step → buffer"] --> SAMPLE["sample 128 transitions<br/>(about 6 from the store of deaths)"]
+        SAMPLE --> TD["TD target = r + γ · Q_target(s', argmax Q(s')) · (1 − terminated)<br/>(Double DQN)"]
         TD --> LOSS["Huber loss → backward → clip grad norm 10 → AdamW step"]
         LOSS --> TGT{"every 200<br/>updates"}
         TGT -- yes --> SYNC["copy Q-network → target network"]
@@ -474,6 +460,8 @@ DQN settings used by `train_gridworld.py` (`make_dqn_args`):
 | Target network update | every 200 gradient steps | |
 | ε schedule | 1.0 → 0.05 over the first 30% of steps | |
 | Loss | Huber, gradient-norm clip 10 | death costs up to −20 against ≈ ±0.1 on a normal step |
+| TD target | Double DQN | the Q-network chooses the next action, the target network values it |
+| Store of deaths | 5% of each batch | every death is kept, so the agent doesn't forget what dying looks like |
 
 ### The Q-network
 
@@ -497,9 +485,6 @@ flowchart LR
     STEP --> EVAL["Evaluation & recording<br/>always run with drop_npc_harm off,<br/>so episodes play out in full"]
 ```
 
-`discard_harmful_pushes` is a separate, off-by-default option: it undoes a push onto fire before it happens and also
-drops the transition. It's implemented as a possible later fix, not one of the experimental conditions.
-
 ### Configuration
 
 Everything about the environment is one frozen dataclass, `GridworldConfig`. `flags.py` turns each simple field into
@@ -516,12 +501,10 @@ saves those changes in its `run.json`.
 | `food_respawn_steps` | 10 | |
 | `drive_exponent`, `drive_root` | 2, 1 | n and m in the drive |
 | `reward_scale` | 10 | β |
-| `npc_drive_weight` | 0 | weight of the NPC's drive in the agent's reward; stays 0 in this experiment |
 | `max_steps` | 100 | episode length |
-| `npc_hunger_threshold`, `npc_fire_step_prob` | 0.5, 0.04 | NPC script |
+| `npc_hunger_threshold`, `npc_fire_step_prob` | 0.5, 0.1 | NPC script |
 | `npc_state_visible` | true | **condition**: visible vs hidden |
 | `drop_npc_harm` | false | **condition**: stored vs dropped |
-| `discard_harmful_pushes` | false | possible later fix, not a condition |
 
 ### Run outputs and the viewer
 
@@ -559,10 +542,11 @@ python train_gridworld.py --seed 1                                    # defaults
 python train_gridworld.py --npc-state-visible false --seed 1          # hidden NPC state
 python train_gridworld.py --drop-npc-harm true --seed 1               # NPC harm never stored
 python train_gridworld.py --npc-enabled false --seed 1                # the agent alone (sanity check)
+python train_gridworld.py --parallel-grid true --seed 1               # the NPC on a grid of its own
 python train_gridworld.py --help                                      # every flag and its default
 ```
 
-Add `--wandb` to log to Weights & Biases. The device (CUDA, MPS or CPU) is picked automatically.
+The device (CUDA, MPS or CPU) is picked automatically.
 
 **View runs:**
 
@@ -575,7 +559,7 @@ Opening `index.html` straight from disk won't work: browsers block it from loadi
 **Test:**
 
 ```bash
-python -m pytest tests/test_gridworld.py tests/test_npc_policy.py    # game mechanics and NPC
+python -m pytest tests --ignore=tests/test_dqn.py                    # game, NPC, parallel grid, buffer
 python -m tests.test_dqn                                             # DQN units + probe environments
 ```
 
@@ -597,9 +581,8 @@ rather than with pytest.
 
 Open issues (details in [DESIGN.md](DESIGN.md#open-issues)):
 
-- **Training stability.** Agents without the NPC reach 95–100% survival, then swing (one seed dropped to 48% and
-  recovered). The working hypothesis is forgetting: once the agent stops dying, examples of death and fire leave the
-  buffer. The buffer is now 100k transitions to test this; Double DQN is next if swings remain.
+- **Catastrophic forgetting.** Once agents stop dying, deaths leave the replay buffer and survival collapses later
+  in training. A store of deaths sampled in every batch, plus Double DQN, makes them much rarer but not gone.
 - **Dropping cuts episodes short**, so dropped-condition agents see fewer late-episode states.
 - **Tuning** of β and starvation damage.
 - **NPC energy** falls visibly at no cost to the agent, which might teach the network to separate the two bodies.

@@ -7,12 +7,7 @@ Run from the repo root: python -m tests.test_gridworld
 from dataclasses import replace
 
 import numpy as np
-import torch as t
 
-from dqn.agent import DQNAgent
-from dqn.networks import ConvQNetwork
-from dqn.replay_buffer import ReplayBuffer
-from envs.gridworld.batched_env import BatchedGridworldEnv
 from envs.gridworld.config import GridworldConfig, Tile
 from envs.gridworld.drive import body_drive
 from envs.gridworld.dynamics import Action, take_step
@@ -20,7 +15,6 @@ from envs.gridworld.observation import CHANNEL_INDEX, observe
 from envs.gridworld.state import Body, GridworldState
 
 CONFIG = GridworldConfig()
-DISCARDING = replace(CONFIG, discard_harmful_pushes=True)
 
 # A sample state: moving right would push the NPC onto fire (X)
 PUSH_ONTO_FIRE_MAP = [
@@ -197,7 +191,7 @@ def test_agent_death_by_fire_terminates_and_jumps_to_max_drive():
     assert result.terminated and not result.truncated
     assert result.next_state.agent.health == 0 and not result.next_state.agent.alive
     assert is_close(result.reward, CONFIG.reward_scale * (drive_before - CONFIG.max_drive))
-    assert is_close(result.coupled_drive, CONFIG.max_drive)
+    assert is_close(body_drive(result.next_state.agent, CONFIG), CONFIG.max_drive)
 
 
 def test_starvation_drains_health_until_death():
@@ -222,7 +216,7 @@ def test_npc_death_removes_it_and_episode_continues():
     result = take_step(state, Action.STAY, Action.RIGHT, CONFIG, make_rng())
     assert result.npc_died and not result.next_state.npc.alive
     assert not result.terminated
-    # Uncoupled: the NPC's death doesn't touch the reward
+    # The NPC's death doesn't touch the reward
     assert is_close(result.reward, -CONFIG.reward_scale * 0.02**2)
     # A dead NPC no longer blocks the agent or gets pushed
     state = result.next_state
@@ -276,17 +270,6 @@ def test_drive_reduction_rewards_sum_to_the_total_drive_change():
     assert is_close(total_reward, CONFIG.reward_scale * (start_drive - body_drive(state.agent, CONFIG)))
 
 
-def test_coupled_drive_includes_the_npc():
-    state = GridworldState.from_ascii(OPEN_MAP)
-    state.tiles[3, 5] = Tile.FIRE  # right of the NPC
-    uncoupled = take_step(state, Action.STAY, Action.RIGHT, CONFIG, make_rng()).reward
-    coupled_config = replace(CONFIG, npc_drive_weight=0.5)
-    coupled = take_step(state, Action.STAY, Action.RIGHT, coupled_config, make_rng()).reward
-    npc_drive_after = 0.3**2 + 0.02**2  # the NPC lost 0.3 health on fire and 0.02 energy
-    assert is_close(uncoupled, -CONFIG.reward_scale * 0.02**2)  # only the agent's own hunger
-    assert is_close(coupled, uncoupled - CONFIG.reward_scale * 0.5 * npc_drive_after)
-
-
 def test_reward_ignores_the_npc():
     agent = dict(agent_health=0.8, agent_energy=0.6)
     healthy_npc = GridworldState.from_ascii(OPEN_MAP, **agent, npc_health=1.0, npc_energy=1.0)
@@ -311,7 +294,6 @@ def test_push_moves_npc_one_square_and_agent_takes_its_place():
     state = GridworldState.from_ascii(OPEN_MAP)
     state.agent.position = (3, 3)  # directly left of the NPC at (3, 4)
     result = take_step(state, Action.RIGHT, Action.STAY, CONFIG, make_rng())
-    assert not result.discarded
     assert result.next_state.agent.position == (3, 4) and result.next_state.npc.position == (3, 5)
 
 
@@ -322,21 +304,8 @@ def test_push_into_wall_fails():
     assert result.next_state.agent.position == (3, 4) and result.next_state.npc.position == (3, 5)
 
 
-def test_harmful_pushes_happen_by_default():
-    assert not CONFIG.discard_harmful_pushes
-
-
-def test_push_onto_fire_is_discarded_when_discarding_is_on():
-    state = push_onto_fire_state()
-    result = take_step(state, Action.RIGHT, Action.STAY, DISCARDING, make_rng())
-    assert result.discarded and not result.terminated and not result.truncated
-    assert result.next_state.agent.position == (3, 1) and result.next_state.npc.position == (3, 2)
-    assert result.next_state.steps_taken == 0  # nothing happened
-
-
-def test_push_onto_fire_happens_when_discarding_is_off():
+def test_push_onto_fire_hurts_the_npc():
     result = take_step(push_onto_fire_state(), Action.RIGHT, Action.STAY, CONFIG, make_rng())
-    assert not result.discarded
     assert result.next_state.agent.position == (3, 2) and result.next_state.npc.position == (3, 3)
     assert result.npc_on_hazard and is_close(result.next_state.npc.health, 0.7 + 0.01 - 0.3)
 
@@ -349,14 +318,13 @@ def test_npc_is_blocked_by_agent_and_walls():
     assert take_step(state, Action.STAY, Action.RIGHT, CONFIG, make_rng()).next_state.npc.position == (3, 5)
 
 
-def test_pushes_are_counted_but_failed_and_discarded_pushes_are_not():
+def test_pushes_are_counted_but_failed_pushes_are_not():
     open_state = GridworldState.from_ascii(OPEN_MAP)
     assert take_step(open_state, Action.RIGHT, Action.STAY, CONFIG, make_rng()).npc_pushed is False  # not adjacent
     open_state.agent.position = (3, 3)
     assert take_step(open_state, Action.RIGHT, Action.STAY, CONFIG, make_rng()).npc_pushed is True
     open_state.npc.position, open_state.agent.position = (3, 5), (3, 4)
     assert take_step(open_state, Action.RIGHT, Action.STAY, CONFIG, make_rng()).npc_pushed is False  # into the wall
-    assert take_step(push_onto_fire_state(), Action.RIGHT, Action.STAY, DISCARDING, make_rng()).npc_pushed is False
     assert take_step(push_onto_fire_state(), Action.RIGHT, Action.STAY, CONFIG, make_rng()).npc_pushed is True
 
 
@@ -375,20 +343,6 @@ def test_take_step_does_not_modify_its_input():
     take_step(state, Action.RIGHT, Action.STAY, CONFIG, make_rng())
     assert state.agent == before.agent and state.npc == before.npc and state.steps_taken == before.steps_taken
     assert (state.food == before.food).all() and (state.tiles == before.tiles).all()
-
-
-
-def test_discarded_pushes_never_reach_the_replay_buffer():
-    """With discarding on, every discarded push is dropped and every other transition is stored."""
-    num_envs, steps = 16, 300
-    env = BatchedGridworldEnv(num_envs, seed=0, device="cpu", config=DISCARDING)
-    obs_shape = env.single_observation_space.shape
-    buffer = ReplayBuffer(num_envs, obs_shape, (), 100_000, seed=0, device="cpu")
-    network = ConvQNetwork(obs_shape, env.single_action_space.n)
-    agent = DQNAgent(env, buffer, network, 1.0, 1.0, 0.5, 10_000, t.Generator().manual_seed(0))  # random actions
-    num_discarded = sum(int(agent.play_step()["discarded"].sum()) for _ in range(steps))
-    assert num_discarded > 0
-    assert buffer.size == num_envs * steps - num_discarded
 
 
 if __name__ == "__main__":

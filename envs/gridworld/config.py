@@ -25,6 +25,9 @@ class GridworldConfig:
     grid_size: int = 7
     num_fire: int = 3  # fire tiles placed at random each episode (see initial_state.py)
     npc_enabled: bool = True  # False = the agent is alone (for checking the environment and the agent's learning)
+    # True = the NPC lives on its own grid, shown to the agent next to its own; the two never interact (see episode.py).
+    # With npc_enabled False the second grid is still there, with its own fire and food, but nobody in it.
+    parallel_grid: bool = False
     start_energy_range: tuple[float, float] = (0.5, 1.0)  # each body's starting energy is uniform in this range
 
     # Bodies. Energy is a resource (0 to 1); health is bodily integrity (0 to 1), and a body dies when health hits 0.
@@ -48,15 +51,10 @@ class GridworldConfig:
     drive_exponent: float = 2.0  # n
     drive_root: float = 1.0  # m
 
-    # Reward = drive reduction (Keramati & Gutkin 2014): r = reward_scale * (D_before - D_after), from the agent's
-    # drive (plus `npc_drive_weight` times the NPC's drive, if coupled). About 0 at rest, positive when a need is met,
-    # negative when harmed. Death jumps the drive to D_max (r = reward_scale * (D_before - D_max)) and ends the
+    # Reward = drive reduction (Keramati & Gutkin 2014): r = reward_scale * (D_before - D_after), from the agent's own
+    # drive only: the NPC never enters the reward. About 0 at rest, positive when a need is met, negative when harmed. Death jumps the drive to D_max (r = reward_scale * (D_before - D_max)) and ends the
     # episode: an absorbing state with no further reward.
     reward_scale: float = 10.0
-
-    # Coupling (Yoshida & Man 2024's "affective empathy"): the agent's drive includes w times the NPC's drive.
-    # 0 = the agent's reward ignores the NPC entirely. A dead NPC counts as maximum drive.
-    npc_drive_weight: float = 0.0
 
     # Episodes are cut off (truncated, not terminated) after this many steps
     max_steps: int = 100
@@ -66,17 +64,13 @@ class GridworldConfig:
 
     # Conditions
     npc_state_visible: bool = True  # False = "hidden": the health/energy channels show 0 at the NPC's square
-    # Chance per step that the NPC, when next to fire, steps onto it by mistake (0 = never). With 3 fire tiles and a
-    # random agent, 0.04 puts the NPC on fire in about 43% of episodes and kills it in under 1%. (With 2 fire tiles:
-    # about 36%; 0.2 gave 74-85% and killed it in about 1 in 5.)
-    npc_fire_step_prob: float = 0.04
+    # Chance per step that the NPC, when next to fire, steps onto it by mistake (0 = never). On its own grid (3 fire
+    # tiles), 0.1 puts the NPC on fire in about 80% of episodes and kills it in about 8%; 0.04 gave 49% and 0.3%,
+    # 0.2 gave 92% and 36%.
+    npc_fire_step_prob: float = 0.1
     # True = any step that leaves the NPC on a tile that hurts it (pushed there or by its own mistake) is never stored
     # in the replay buffer, and the episode restarts, so the agent never learns from seeing the NPC hurt.
     drop_npc_harm: bool = False
-
-    # Training: if True, a push that would put the NPC on a tile that hurts it is discarded (the agent never learns
-    # from it) and the episode restarts, so the agent never experiences what such a push does. False lets it happen.
-    discard_harmful_pushes: bool = False
 
     def agent_damage(self, tile: Tile) -> float:
         """Health the agent loses per step standing on `tile`."""

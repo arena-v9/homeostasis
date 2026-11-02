@@ -1,6 +1,6 @@
 """
 Command-line flags generated from a dataclass config: every simple field becomes a flag with the same name
-(`npc_drive_weight` -> `--npc-drive-weight`), so a run changes only the settings it passes and everything else keeps
+(`drop_npc_harm` -> `--drop-npc-harm`), so a run changes only the settings it passes and everything else keeps
 the dataclass's defaults.
 
     parser = argparse.ArgumentParser()
