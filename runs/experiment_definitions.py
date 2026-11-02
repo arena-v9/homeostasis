@@ -61,4 +61,25 @@ EXPERIMENTS = {
             ]},
         ],
     },
+    "experiment-2": {
+        "title": "Experiment 2: Does seeing the NPC's health and energy change how the agent learns to survive?",
+        "runs_per_group": 15,
+        "setup": (
+            "The same parallel grids as experiment 1, with the NPC on the second grid in both groups. In one group the "
+            "NPC's health and energy are hidden (experiment 1's NPC group, reused); in the other they are drawn on the "
+            "same health and energy channels as the agent's own. The agent and the NPC never interact, and the NPC's "
+            "state never enters the agent's reward. Same seeds and training as experiment 1."
+        ),
+        "groups": [
+            {"label": "NPC hidden", "phrase": "with the NPC's state hidden",
+             "config_changes": {"parallel_grid": True, "npc_state_visible": False}},
+            {"label": "NPC visible", "phrase": "with the NPC's state visible",
+             "config_changes": {"parallel_grid": True}},
+        ],
+        "questions": [
+            {"kind": "better", "title": "Does an agent that sees the NPC's health and energy do better?"},
+            {"kind": "test_dependence",
+             "title": "Is the agent learning to survive, or does it depend on seeing the NPC's state?"},
+        ],
+    },
 }

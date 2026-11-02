@@ -146,6 +146,11 @@ trained with the NPC were more reliable (their survival collapsed less often lat
 that could come from the NPC competing for food, moving food around, or being pushed. The parallel grid removes all
 of those, so any remaining difference comes from watching the NPC.
 
+**Experiment 2: does seeing the NPC's health and energy change how the agent learns to survive?** Both groups use the
+parallel grid with the NPC. In one group the NPC's health and energy are hidden (experiment 1's NPC group, reused); in
+the other they are visible, on the same channels as the agent's own. 15 runs per group, the same seeds as experiment
+1. The NPC's state is only seen, never part of the reward. Analysed with `python -m runs.experiments experiment-2`.
+
 ## Evaluation (planned)
 
 Matched test layouts where pushing is free: a fire push (the NPC lands on fire) and a floor push (same geometry, NPC
