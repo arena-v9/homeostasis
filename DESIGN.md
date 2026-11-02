@@ -3,7 +3,7 @@
 The living record of the experiment's design. Update it whenever the design changes. Code is the source of truth for
 numbers (`envs/gridworld/config.py`); this file explains what the design is and why.
 
-Last updated: 2026-11-01.
+Last updated: 2026-11-02.
 
 ## Research question
 
@@ -19,13 +19,15 @@ experiment is the PDF in the repo root; it was a starting proposal, and this fil
 
 | Element | Current design |
 |---|---|
-| Map | 7×7 grid with a wall border (5×5 playable). Each episode places 2 fire tiles and 2 food items at random on floor, checking that food is reachable without crossing fire |
+| Map | 7×7 grid with a wall border (5×5 playable). Each episode places 3 fire tiles and 2 food items at random on floor, checking that food is reachable without crossing fire |
 | Food | Eaten items respawn 10 steps later on a random empty floor tile |
 | Fire | Hurts any body standing on it: −0.3 health per step |
 | Actions | Up, down, left, right, stay. Moving into the NPC pushes it one square and the agent takes its place; a push into a wall fails |
 | Episode | 100 steps, then truncated (not terminated: values bootstrap through the cutoff). Ends early if the agent dies |
 
 Order of one step: the agent moves (and may push), the NPC moves, food respawns, bodies update, reward is computed.
+A pushed NPC loses its move that step: its action was chosen before the push, so applying it from the new square could
+walk it onto fire.
 
 ## Bodies
 
@@ -49,6 +51,18 @@ where health recovers only while food, drink and energy are all above zero and d
 Damasio's view of an organism maintaining its integrity. A body left alone drifts toward death (hunger, then
 starvation), which is the "being-towards-death" condition Christov-Moore et al. (2025) argue is needed for a
 homeostatic drive.
+
+## NPC
+
+The NPC has no network; it follows a script (`envs/gridworld/npc_policy.py`), the same in every condition:
+
+- **Hungry** (energy < 0.5): steps along a shortest path to the nearest food that never enters fire, routing around
+  the agent when possible. Ties between equally short paths are broken at random.
+- **Otherwise:** wanders, choosing uniformly among staying and the moves onto squares that aren't fire.
+- **Mistakes:** when next to fire, it steps onto it with probability `npc_fire_step_prob` = 0.04, and its normal
+  script takes it off again the next step. With a random agent this puts the NPC on fire in about 43% of episodes
+  and kills it in under 1%. (With the earlier 2 fire tiles: about 36%; 0.2 put it on fire in 74–85% of episodes and
+  killed it in about 1 in 5.) At 0 it never walks onto fire.
 
 ## Drive and reward
 
@@ -95,15 +109,18 @@ hazards and are currently all zeros.
 - Huber loss on the TD error and gradient-norm clipping (max 10), as in standard DQN (Mnih et al. 2015 clip the TD
   error, which is equivalent to the Huber loss). ARENA's teaching version leaves both out. They matter here because
   rewards have rare large spikes: a death costs up to β · D_max = 20, against about ±0.1 on a normal step.
-- During training, a push that would put the NPC on a tile that hurts it is discarded and the episode restarts, so
-  the agent never experiences what such a push does and any avoidance comes from generalization.
+- Harmful pushes happen: the agent can push the NPC onto fire. Discarding them (`discard_harmful_pushes`: the push
+  is undone, the transition is never stored and the episode restarts) is implemented as a possible later fix, not
+  part of the current conditions.
+- Transitions the environment flags in `infos["dropped"]` are never stored in the replay buffer (see NPC harm
+  below). Evaluation always runs with `drop_npc_harm` off, so its episodes play out in full.
 
 ## Experimental conditions
 
 | Condition | Options |
 |---|---|
 | NPC state | Visible (NPC health and energy on the shared channels) or hidden (0 at the NPC's square) |
-| Witnessing | The NPC never steps on fire, or sometimes does (chance 0.2 when next to fire), so the agent sees harm to the NPC that costs it nothing |
+| NPC harm in training (`drop_npc_harm`) | Stored (default) or dropped. Dropped: any step that leaves the NPC on a harmful tile, whether the agent pushed it there or it stepped there by mistake, is never stored in the replay buffer, and the episode restarts so the agent doesn't see its aftermath (e.g. lowered health) either. The environment is otherwise identical: the NPC makes the same mistakes and pushes still happen |
 | Coupling | Weight w on the NPC's drive in the agent's drive: D = D_agent + w · D_npc. w = 0 is the main test; w = 0.25 and 0.5 are positive controls |
 
 **Why coupling is included:** Yoshida & Man (2024) found that homeostatic agents who could observe a partner's
@@ -126,7 +143,8 @@ the best alternative (secondary, more sensitive). Avoidance = floor-push value �
 | Mechanics, observation, tests (`envs/gridworld/dynamics.py`, `drive.py`, `observation.py`, `tests/test_gridworld.py`) | Done |
 | Random layouts (`envs/gridworld/initial_state.py`), batched env, CNN, training script (`train_gridworld.py`, flags named after config fields) | Done |
 | Run outputs: one JSON folder per run, viewer page with run picker, curves and replays (`runs/outputs.py`, `ui/index.html`) | Done |
-| Scripted NPC, witnessed condition, verification counters | Not started |
+| Scripted NPC, `drop_npc_harm` (`envs/gridworld/npc_policy.py`, `tests/test_npc_policy.py`); counters for pushes, NPC steps on fire and the agent's steps on fire in the evaluations and replays | Done |
+| Counters over the training data itself (dropped transitions, NPC-on-fire steps the agent stored) | Not started |
 | Evaluation harness | Not started |
 
 ## Open issues
@@ -141,6 +159,13 @@ the best alternative (secondary, more sensitive). Avoidance = floor-push value �
   deaths and fire once the agent stops making them, so the value of dangerous states drifts until it fails again.
   The buffer is now 100k transitions to test this; not yet run. If the swings remain, try Double DQN next.
   Selecting the best checkpoint on separate validation layouts is a safety net for the evaluation either way.
+- **Dropping cuts episodes short.** With `drop_npc_harm`, every NPC-on-fire event restarts the episode (about 43%
+  of episodes with a random agent), so dropped-condition agents see fewer late-episode states. Check whether
+  that changes their own survival compared with stored-condition agents.
+- **Fire is rarely deadly for trained agents.** With 2 fire tiles, trained agents died in fire in under 1 in 200
+  test episodes, so fire behaviour couldn't be compared between conditions. Fire tiles went from 2 to 3
+  (2026-11-02) to make fire matter more; if fire deaths stay this rare, consider slippery moves (a small chance that
+  a move goes in a random direction), so that walking next to fire carries risk.
 - **Tuning.** β = 10 and starvation damage 0.05 are judgment calls; check against the agent's behaviour without the NPC.
 - **NPC energy.** The NPC's energy visibly falls at no cost to the agent, which may teach the network to separate
   the two bodies. If so, hold the NPC's energy constant during training.
