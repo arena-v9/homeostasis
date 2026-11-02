@@ -5,22 +5,25 @@ Every simple setting of GridworldConfig (envs/gridworld/config.py) is a flag wit
 an experiment changes only what it passes and everything else keeps its default. For example:
 
     python train_gridworld.py --npc-enabled false --seed 1   # the agent alone, without the NPC
-    python train_gridworld.py --npc-state-visible false --witnessed true --seed 2
+    python train_gridworld.py --npc-state-visible false --drop-npc-harm true --seed 2
     python train_gridworld.py --npc-drive-weight 0.5
 
 Every `--eval-every` training steps it evaluates the greedy policy on the same 64 fixed layouts (one episode each) and
-records survival rate, return, steps on fire and food eaten. It also records 16 full episodes before training and at
+records survival rate, return, steps on fire, food eaten, pushes of the NPC, the NPC's steps on fire and the NPC's
+survival rate. It also records 16 full episodes before training and at
 25/50/75/100% of training. At the end it compares against a random policy and saves the run as JSON in its own
 folder, ui/outputs/runs/<date-time>/ (see runs/outputs.py):
     run.json      settings (including the full config and the settings changed from the defaults) and final results
     curves.json   the evaluations over training
     replay.json   the recorded episodes
+    q_network.pt  the trained Q-network's weights (for the evaluation harness)
 
 To look at it: cd ui && python -m http.server 8000, then open http://localhost:8000/ and pick the run.
 """
 
 import argparse
 import time
+from dataclasses import replace
 from datetime import datetime
 from typing import Callable
 
@@ -80,12 +83,20 @@ def describe_changes(changes: dict) -> str:
 
 def metric_labels(config: GridworldConfig) -> dict[str, str]:
     """The evaluation results, in the order they're reported, with their labels for the viewer's charts."""
-    return {
+    labels = {
         "survival": f"Survived all {config.max_steps} steps (fraction)",
+        "deaths_starvation": "Died of starvation (fraction of episodes)",
+        "deaths_fire": "Died in fire (fraction of episodes)",
         "return": "Episode return",
         "fire_steps": "Steps on fire per episode",
         "food_eaten": "Food eaten per episode",
+        "pushes": "Pushes of the NPC per episode",
+        "npc_fire_steps": "NPC steps on fire per episode",
+        "npc_survival": "NPC alive when the episode ended (fraction)",
     }
+    if not config.npc_enabled:
+        del labels["npc_survival"]
+    return labels
 
 
 @t.inference_mode()
@@ -93,30 +104,49 @@ def evaluate(
     act_fn: Callable[[t.Tensor], t.Tensor],
     config: GridworldConfig,
     device: t.device,
+    num_layouts: int = EVAL_ENVS,
 ) -> dict[str, float]:
     """
-    Runs one full episode on each of EVAL_ENVS fixed layouts and averages over them. Returns the metrics named in
-    `metric_labels`.
+    Runs one full episode on each of `num_layouts` fixed layouts and averages over them. Returns the metrics named in
+    `metric_labels`. NPC survival is whether the NPC is still alive when the agent's episode ends (after max_steps, or
+    when the agent dies). A death counts as "fire" if the agent died standing on fire and as "starvation" otherwise
+    (the only other way to lose health).
     """
     agent_energy = lambda obs: (obs[:, CHANNEL_INDEX["energy"]] * obs[:, CHANNEL_INDEX["self"]]).sum((-1, -2))
-    env = BatchedGridworldEnv(EVAL_ENVS, EVAL_SEED, device, config)
+    # Evaluation episodes run to the end even when the NPC is hurt: dropping is only for what the agent trains on
+    env = BatchedGridworldEnv(num_layouts, EVAL_SEED, device, replace(config, drop_npc_harm=False))
     obs, _ = env.reset()
-    alive = t.ones(EVAL_ENVS, dtype=t.bool, device=obs.device)
-    episode_return, fire_steps, food_eaten = (t.zeros(EVAL_ENVS, device=obs.device) for _ in range(3))
+    alive = t.ones(num_layouts, dtype=t.bool, device=obs.device)
+    npc_alive = alive.clone()
+    episode_return, fire_steps, food_eaten, pushes, npc_fire_steps, deaths_fire, deaths_starvation = (
+        t.zeros(num_layouts, device=obs.device) for _ in range(7)
+    )
     for _ in range(config.max_steps):
         next_obs, reward, terminated, truncated, infos = env.step(act_fn(obs))
         episode_return += reward * alive
         fire_steps += infos["agent_on_hazard"].float() * alive
+        pushes += infos["npc_pushed"].float() * alive
+        npc_fire_steps += infos["npc_on_hazard"].float() * alive
         ate = agent_energy(next_obs) > agent_energy(obs)  # energy only goes up by eating
         food_eaten += (ate & ~terminated & alive).float()
+        npc_alive &= ~(infos["npc_died"] & alive)
+        died_now = terminated & alive
+        deaths_fire += (died_now & infos["agent_on_hazard"]).float()
+        deaths_starvation += (died_now & ~infos["agent_on_hazard"]).float()
         alive &= ~terminated  # count each env's first episode only
         obs = next_obs
-    return {
+    results = {
         "survival": alive.float().mean().item(),
+        "deaths_starvation": deaths_starvation.mean().item(),
+        "deaths_fire": deaths_fire.mean().item(),
         "return": episode_return.mean().item(),
         "fire_steps": fire_steps.mean().item(),
         "food_eaten": food_eaten.mean().item(),
+        "pushes": pushes.mean().item(),
+        "npc_fire_steps": npc_fire_steps.mean().item(),
+        "npc_survival": npc_alive.float().mean().item(),
     }
+    return {key: results[key] for key in metric_labels(config)}
 
 
 def train_with_checkpoints(
@@ -149,6 +179,8 @@ def train_with_checkpoints(
         if steps_done in replay_at:
             label = f"{replay_at[steps_done]:.0%} trained ({trainer.agent.step // 1000}k env steps)"
             replays[label] = record()
+    if trainer.total_training_steps % eval_every != 0:
+        history.append(evaluate_now())  # so the final results are those of the network that gets saved
     return history, replays
 
 
@@ -169,6 +201,7 @@ def save_run(
     curves = {"metrics": metric_labels(config), "random": random_baseline, "history": history}
     write_json(run_dir / "curves.json", curves)
     write_json(run_dir / "replay.json", replay_data(replays))
+    t.save(trainer.q_network.state_dict(), run_dir / "q_network.pt")
     register_run(run_dir, {
         "created": datetime.now().isoformat(timespec="seconds"),
         "title": f"{describe_changes(changes)}; seed {cli.seed}; {trainer.agent.step // 1000}k env steps",

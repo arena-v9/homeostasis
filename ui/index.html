@@ -4,25 +4,28 @@
 <title>Gridworld Runs</title>
 <style>
 /* Pick a training run, see its learning curves, then its replays. In the replays all recorded episodes play side by
-   side, like the training videos: each cell is one episode, with the agent's health (red) and energy (yellow) bars
-   above its grid. Bars jump once per step, with no animation. */
+   side, like the training videos: each cell is one episode, with health (red) and energy (yellow) bars above its
+   grid, the agent's on the left and the NPC's on the right. Bars jump once per step, with no animation. */
 :root {
   --bg: #ffffff; --ink: #1d2320; --muted: #66706c; --line: #dde2e0; --cell: #fafbfb;
   --wall: #6e6e6e; --floor: #ffffff; --grid: #e1e1e1; --fire: #ff7800; --food: #3cb44b;
   --agent: #285adc; --npc: #963cc8; --health: #dc2828; --energy: #e6be00; --track: #e6e6e6;
   --died: #c43535; --ok: #23824c;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #141816; --ink: #e6ece9; --muted: #98a49f; --line: #2c3532; --cell: #1b201e;
   --wall: #555b58; --floor: #262c29; --grid: #323a36; --fire: #ff8c33; --food: #46c25a;
   --agent: #6f98ff; --npc: #c07af0; --health: #ff5c5c; --energy: #ffd23f; --track: #333b37;
   --died: #ff6b6b; --ok: #4fca82; color-scheme: dark;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
 } }
 :root[data-theme="dark"] {
   --bg: #141816; --ink: #e6ece9; --muted: #98a49f; --line: #2c3532; --cell: #1b201e;
   --wall: #555b58; --floor: #262c29; --grid: #323a36; --fire: #ff8c33; --food: #46c25a;
   --agent: #6f98ff; --npc: #c07af0; --health: #ff5c5c; --energy: #ffd23f; --track: #333b37;
   --died: #ff6b6b; --ok: #4fca82; color-scheme: dark;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -49,10 +52,60 @@ h2 { margin: 14px 0 0; font-size: 1.05rem; }
 .chart .head { font-size: 0.85rem; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .chart svg { width: 100%; height: auto; display: block; overflow: visible; }
 .chart text { font-size: 10px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.tabs { display: flex; flex-wrap: wrap; gap: 2px 4px; border-bottom: 1px solid var(--line); }
+.tabs a { padding: 6px 10px; margin-bottom: -1px; color: var(--muted); text-decoration: none;
+  border-bottom: 2px solid transparent; }
+.tabs a:hover { color: var(--ink); }
+.tabs a[aria-current="page"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--cell); min-width: 0; }
+.tile .label { color: var(--muted); font-size: 0.8rem; }
+.tile .value { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile .note { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.table-wrap { overflow-x: auto; }
+table.stats { border-collapse: collapse; width: 100%; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+table.stats th, table.stats td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: right;
+  white-space: nowrap; }
+table.stats th { font-weight: 600; color: var(--muted); }
+table.stats th:first-child, table.stats td:first-child { text-align: left; white-space: normal; }
+.chart-wide { overflow-x: auto; }
+.chart-wide svg { width: 100%; min-width: 520px; height: auto; display: block; overflow: visible; }
+.chart-wide text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.chart-wide .row-label { fill: var(--ink); }
+.dot { cursor: pointer; }
+h3 { margin: 16px 0 0; font-size: 1rem; }
+a { color: var(--series-1); }
+.question { display: contents; }
+.answer { margin: 0; line-height: 1.5; max-width: 80ch; }
+ul.answer, ol.answer { padding-left: 20px; }
+.how { margin: 0; color: var(--muted); font-size: 0.85rem; line-height: 1.45; max-width: 80ch; }
+.callout { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; background: var(--cell); }
+.callout-title { font-weight: 600; margin-bottom: 4px; }
+.callout ol { margin: 0; padding-left: 20px; line-height: 1.5; }
+.callout li + li { margin-top: 4px; }
+.muted { color: var(--muted); }
+.small { font-size: 0.75rem; }
+.tag { display: inline-block; font-size: 0.75rem; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; padding: 1px 8px; }
+details > summary { cursor: pointer; font-weight: 600; margin-top: 18px; }
+details[open] { display: flex; flex-direction: column; gap: 10px; }
+table.grid td { text-align: center; }
+table.stats.compact th { white-space: normal; }
+table.stats.compact td:first-child { white-space: nowrap; }
+table.grid th:not(:first-child) { text-align: center; }
+.cell-value { font-size: 1.15rem; font-weight: 600; }
+.tooltip { position: fixed; z-index: 10; pointer-events: none; background: var(--bg); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 0.8rem; line-height: 1.5;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.15); max-width: 260px; }
+.tooltip strong { font-variant-numeric: tabular-nums; }
+.tooltip .muted { color: var(--muted); }
 </style>
 
 <div class="wrap">
   <h1>Gridworld Runs</h1>
+  <nav id="tabs" class="tabs" aria-label="Views"><a href="#" data-view="runs">Runs</a></nav>
+  <div id="runs-view" style="display:contents">
   <p id="load-msg" class="sub" hidden></p>
   <div id="viewer" hidden style="display:contents">
   <div class="controls">
@@ -87,7 +140,55 @@ h2 { margin: 14px 0 0; font-size: 1.05rem; }
   <p class="sub">Greedy policy on 64 fixed layouts, evaluated during training. Dashed line: random policy.</p>
   <div id="charts" class="charts"></div>
   </div>
+  </div>
+
+  <div id="experiment-view" hidden style="display:contents">
+    <h2 id="exp-title"></h2>
+    <p id="exp-setup" class="sub"></p>
+    <p class="sub"><b>Survival</b> is the fraction of test episodes in which the agent stays alive for all 100 steps.
+      Every 8k environment steps, each run is tested on the same 64 fixed layouts.</p>
+    <span id="exp-meta" class="num"></span>
+    <div class="callout">
+      <div class="callout-title">In short</div>
+      <ol id="exp-short"></ol>
+    </div>
+    <div id="exp-questions" style="display:contents"></div>
+
+    <details>
+      <summary>Details: robustness checks, all metrics, learning curves, runs, methods</summary>
+      <h3>Robustness checks</h3>
+      <ul id="exp-robustness" class="answer"></ul>
+      <h3>All metrics</h3>
+      <p class="sub">Mean ± standard deviation over runs of the second-half averages, with the random policy below.
+        Differences are the second group minus the first.</p>
+      <div class="table-wrap"><table id="exp-summary" class="stats"></table></div>
+      <h3>Learning curves</h3>
+      <p class="sub">Line: mean over runs. Band: lowest to highest run. Dashed: random policy.</p>
+      <div id="exp-legend" class="legend"></div>
+      <div id="exp-curves" class="charts"></div>
+      <h3>Runs</h3>
+      <div id="exp-runs" class="answer"></div>
+      <h3>Methods</h3>
+      <ul class="answer">
+        <li><b>Evaluations:</b> every 8k environment steps, the greedy policy plays one episode on each of the same
+          64 fixed layouts.</li>
+        <li><b>Reliability:</b> the share of a run's evaluations after 100k environment steps (13 of them) with at
+          least 95% survival. Deaths by cause are counted over the same evaluations (13 × 64 = 832 episodes per run)
+          and given per 1,000 episodes.</li>
+        <li><b>95% interval:</b> bootstrap over training runs (20,000 resamples). A difference is called
+          <i>clear</i> only when its interval excludes zero and p &lt; 0.05. A clear survival difference under 0.02
+          is called <i>negligible</i>.</li>
+        <li><b>p-value:</b> two-sided permutation test, shuffling runs between the two groups. For the same networks
+          tested twice (section 2), a sign-flip test on each run's difference.</li>
+        <li><b>Final-network tests</b> (section 2): each run's saved network at the end of training, greedy, one
+          episode on each of 512 fixed layouts. One snapshot per run.</li>
+        <li><b>Cause of death:</b> "fire" if the agent died standing on fire, "starvation" otherwise (the only other
+          way to lose health).</li>
+      </ul>
+    </details>
+  </div>
 </div>
+<div id="tooltip" class="tooltip" hidden></div>
 
 <script>
 // Reads outputs/runs.json (the list of runs) and, for the chosen run, outputs/runs/<name>/run.json, curves.json and
@@ -113,7 +214,7 @@ const lastFrameIndex = () => Math.max(...episodes().map((episode) => episode.fra
 
 // ---- Loading --------------------------------------------------------------------------------------------------------
 
-const getJson = (url) => fetch(url).then((response) => {
+const getJson = (url) => fetch(url, { cache: "no-cache" }).then((response) => {  // always the latest results
   if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
   return response.json();
 });
@@ -127,6 +228,7 @@ async function loadRun(name) {
   setPlaying(false);
   currentRun = name;
   $("run").value = name;
+  $("tabs").querySelector('[data-view="runs"]').href = `#${encodeURIComponent(name)}`;
   try {
     const runFolder = `outputs/runs/${encodeURIComponent(name)}/`;
     const [info, curves, runReplay] = await Promise.all(
@@ -178,7 +280,7 @@ function drawCharts(curves) {
     const values = curves.history.map((evaluation) => evaluation[metric]);
     const randomValue = curves.random[metric];
     let low = Math.min(...values, randomValue), high = Math.max(...values, randomValue);
-    if (metric === "survival") { low = 0; high = 1; }
+    if (metric === "survival" || metric === "npc_survival") { low = 0; high = 1; }
     if (high === low) high = low + 1;
     const toX = (steps) => PADDING.left + (WIDTH - PADDING.left - PADDING.right) * (steps / maxEnvSteps);
     const toY = (value) => PADDING.top + (HEIGHT - PADDING.top - PADDING.bottom) * (1 - (value - low) / (high - low));
@@ -213,20 +315,30 @@ function drawCharts(curves) {
 
 // ---- Replays --------------------------------------------------------------------------------------------------------
 
-// One episode's cell: health and energy bars on top, then the grid. An episode that has ended stays on its last frame
+// One episode's cell: health and energy bars on top (agent left, NPC right), then the grid. An episode that has ended stays on its last frame
 // with a label.
 function drawEpisode(context, episode, cellX, cellY, cellWidth, cellHeight, colors) {
   const lastFrame = episode.frames.length - 1;
   const frame = episode.frames[Math.min(frameIndex, lastFrame)];
   const MARGIN = 4, BAR_GAP = 3, barHeight = Math.round(cellHeight * 0.07);
 
-  [[frame.agent.health, colors.health], [frame.agent.energy, colors.energy]].forEach(([value, color], row) => {
-    const barY = cellY + MARGIN + row * (barHeight + BAR_GAP);
-    const barWidth = cellWidth - 2 * MARGIN;
-    context.fillStyle = colors.track;
-    context.fillRect(cellX + MARGIN, barY, barWidth, barHeight);
-    context.fillStyle = color;
-    context.fillRect(cellX + MARGIN, barY, barWidth * Math.max(0, Math.min(1, value)), barHeight);
+  // Agent's bars on the left half, the NPC's on the right, each behind a dot in its body's color. A dead or absent
+  // NPC shows empty tracks.
+  const halfWidth = (cellWidth - 3 * MARGIN) / 2, dotSize = 2 * barHeight + BAR_GAP;
+  [[frame.agent, colors.agent], [frame.npc, colors.npc]].forEach(([body, bodyColor], side) => {
+    const left = cellX + MARGIN + side * (halfWidth + MARGIN);
+    const barX = left + dotSize + BAR_GAP, barWidth = halfWidth - dotSize - BAR_GAP;
+    context.fillStyle = bodyColor;
+    context.beginPath();
+    context.arc(left + dotSize / 2, cellY + MARGIN + dotSize / 2, dotSize / 2.5, 0, Math.PI * 2);
+    context.fill();
+    [[body?.health ?? 0, colors.health], [body?.energy ?? 0, colors.energy]].forEach(([value, color], row) => {
+      const barY = cellY + MARGIN + row * (barHeight + BAR_GAP);
+      context.fillStyle = colors.track;
+      context.fillRect(barX, barY, barWidth, barHeight);
+      context.fillStyle = color;
+      context.fillRect(barX, barY, barWidth * Math.max(0, Math.min(1, value)), barHeight);
+    });
   });
 
   const gridTop = cellY + MARGIN + 2 * (barHeight + BAR_GAP) + 2;
@@ -260,7 +372,9 @@ function drawEpisode(context, episode, cellX, cellY, cellWidth, cellHeight, colo
 
   if (frameIndex >= lastFrame) {
     const died = episode.outcome === "died";
-    const text = died ? `died at step ${lastFrame}` : episode.outcome;
+    // Older runs' replays have no npc_died_at field
+    const npcDied = episode.npc_died_at != null ? ` · NPC died at ${episode.npc_died_at}` : "";
+    const text = (died ? `died at step ${lastFrame}` : episode.outcome) + npcDied;
     context.font = `600 ${Math.max(11, Math.round(square * 0.55))}px system-ui, sans-serif`;
     const textWidth = context.measureText(text).width, textY = gridTop + (square * gridSize) / 2;
     context.fillStyle = colors.bg;
@@ -278,7 +392,7 @@ function drawEpisode(context, episode, cellX, cellY, cellWidth, cellHeight, colo
 
 // All episodes of the current training stage, side by side, at the current step.
 function drawReplay() {
-  if (!replay) return;
+  if (!replay || !$("view").clientWidth) return;  // nothing loaded yet, or the runs view is hidden
   const canvas = $("view"), pixelRatio = window.devicePixelRatio || 1;
   const width = canvas.clientWidth, height = canvas.clientHeight;
   canvas.width = width * pixelRatio;
@@ -306,7 +420,452 @@ function drawReplay() {
   $("scrub").value = frameIndex;
   $("step").textContent = `step ${frameIndex} / ${lastFrameIndex()}`;
   const survived = shown.filter((episode) => episode.outcome === "survived").length;
-  $("summary").textContent = `${survived} of ${shown.length} episodes survived`;
+  let summary = `${survived} of ${shown.length} episodes survived`;
+  if (shown.some((episode) => "npc_died_at" in episode) && shown.some((episode) => episode.frames[0].npc)) {
+    const npcsSurvived = shown.filter((episode) => episode.frames[0].npc && episode.npc_died_at == null).length;
+    summary += ` · the NPC survived in ${npcsSurvived}`;
+  }
+  $("summary").textContent = summary;
+}
+
+// ---- Experiment tabs -------------------------------------------------------------------------------------------------
+
+// Each experiment tab shows outputs/experiments/<id>.json, written by `python -m runs.experiments <id>` (see
+// runs/experiments.py for what it contains). The page is a short list of questions, each with a generated answer,
+// one chart and a line on how to read it; everything else sits in the collapsed details.
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const svgEl = (tag, attributes, parent) => {
+  const element = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+  if (parent) parent.append(element);
+  return element;
+};
+const htmlEl = (tag, attributes = {}, text) => {
+  const element = document.createElement(tag);
+  for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+  if (text != null) element.textContent = text;
+  return element;
+};
+const seriesColor = (index) => `var(--series-${index + 1})`;
+const fmt = (value, digits = 2) => (value == null ? "—" : value.toFixed(digits));
+const signed = (value, digits = 2) => {
+  const text = Math.abs(value).toFixed(digits);
+  return Number(text) === 0 ? text : (value > 0 ? "+" : "−") + text;
+};
+const pct = (value) => `${(value * 100).toFixed(1)}%`;
+const formatP = (p) => (p < 0.001 ? "p < 0.001" : `p = ${p.toFixed(3)}`);
+const interval = (result, format = signed) =>
+  `${format(result.difference)} (95% interval ${format(result.ci95[0])} to ${format(result.ci95[1])}, ` +
+  `${formatP(result.p_value)})`;
+const niceStep = (range) => [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20].find((step) => range / step <= 6) || 50;
+const METRIC_NAMES = {
+  survival: "Survival", deaths_starvation: "Died of starvation", deaths_fire: "Died in fire", return: "Return",
+  food_eaten: "Food eaten", fire_steps: "Steps on fire", pushes: "Pushes of the NPC",
+  npc_fire_steps: "NPC steps on fire", npc_survival: "NPC survival",
+};
+const metricName = (metric) => METRIC_NAMES[metric] || experiment.metrics[metric] || metric;
+let experimentList = [];
+let experiment = null;  // the experiment being shown
+const experimentRequests = {};
+
+// One tooltip for the whole page. `rows` are [value, label, color?]; text only, never HTML.
+function showTooltip(event, title, rows) {
+  const tooltip = $("tooltip");
+  tooltip.replaceChildren(htmlEl("div", { class: "muted" }, title));
+  for (const [value, label, color] of rows) {
+    const row = htmlEl("div");
+    if (color) {
+      const key = htmlEl("span", { class: "key" });
+      key.style.background = color;
+      row.append(key);
+    }
+    row.append(htmlEl("strong", {}, value), htmlEl("span", { class: "muted" }, ` ${label}`));
+    tooltip.append(row);
+  }
+  tooltip.hidden = false;
+  const x = Math.min(event.clientX + 14, window.innerWidth - tooltip.offsetWidth - 8);
+  const y = Math.min(event.clientY + 14, window.innerHeight - tooltip.offsetHeight - 8);
+  tooltip.style.left = `${Math.max(8, x)}px`;
+  tooltip.style.top = `${Math.max(8, y)}px`;
+}
+const hideTooltip = () => { $("tooltip").hidden = true; };
+// Hover and keyboard focus show the same tooltip
+function addTooltip(element, title, rows) {
+  const show = (event) => showTooltip(event, title, rows);
+  element.addEventListener("pointermove", show);
+  element.addEventListener("pointerleave", hideTooltip);
+  element.addEventListener("focus", () => {
+    const box = element.getBoundingClientRect();
+    show({ clientX: box.right, clientY: box.bottom });
+  });
+  element.addEventListener("blur", hideTooltip);
+}
+
+const groupKey = (index, label) => {
+  const span = htmlEl("span");
+  const key = htmlEl("span", { class: "key" });
+  key.style.background = seriesColor(index);
+  span.append(key, document.createTextNode(label));
+  return span;
+};
+const groupLegend = () => {
+  const legend = htmlEl("div", { class: "legend" });
+  experiment.groups.forEach((group, index) => legend.append(groupKey(index, `Trained ${group.phrase}`)));
+  return legend;
+};
+
+async function loadExperiment(id) {
+  experimentRequests[id] ??= getJson(`outputs/experiments/${encodeURIComponent(id)}.json`);
+  try {
+    const loaded = await experimentRequests[id];
+    if (currentView() !== id) return;
+    experiment = loaded;
+    renderExperiment();
+  } catch (error) {
+    delete experimentRequests[id];
+    $("exp-title").textContent = "";
+    $("exp-setup").textContent = `Couldn't load ${id} (${error.message}).`;
+  }
+}
+
+function renderExperiment() {
+  const { groups, questions } = experiment;
+  $("exp-title").textContent = experiment.title;
+  $("exp-setup").textContent = experiment.setup;
+  $("exp-meta").textContent = groups.map((group) => `${group.label}: ${group.runs.length} runs`).join(" · ") +
+    ` · analysed ${experiment.created.replace("T", " ")}`;
+
+  $("exp-short").replaceChildren(...questions.map((question) => {
+    const item = htmlEl("li");
+    item.append(htmlEl("span", { class: "muted" }, `${question.title} `), htmlEl("strong", {}, question.short));
+    return item;
+  }));
+
+  const container = $("exp-questions");
+  container.replaceChildren();
+  questions.forEach((question, index) => {
+    const section = htmlEl("section", { class: "question" });
+    section.append(htmlEl("h3", {}, `${index + 1}. ${question.title}`));
+    // The answer's first sentence is the verdict
+    const split = question.answer.indexOf(". ");
+    const answer = htmlEl("p", { class: "answer" });
+    answer.append(htmlEl("strong", {}, question.answer.slice(0, split + 1)),
+                  document.createTextNode(question.answer.slice(split + 1)));
+    section.append(answer);
+    const draw = { better: drawBetter, test_dependence: drawTestDependence,
+                   explanations: drawExplanations }[question.kind];
+    section.append(...draw(question));
+    container.append(section);
+  });
+
+  drawDetails();
+}
+
+// Section kind "better": the three measures in a table, reliability per run, and the learning curves behind them.
+function drawBetter(question) {
+  const { groups } = experiment;
+  const [base, other] = groups.map((group) => group.phrase);
+  const rows = [
+    ["reliability", "Reliability",
+     (value) => `${Math.round(value * 100)}%`, (value) => `${signed(value * 100, 0)} points`],
+    ["deaths_starvation", "Starvation deaths / 1,000", (value) => value.toFixed(0),
+     (value) => signed(value, 0)],
+    ["deaths_fire", "Fire deaths / 1,000", (value) => value.toFixed(1), (value) => signed(value, 1)],
+  ];
+  const wrapper = htmlEl("div", { class: "table-wrap" });
+  const table = htmlEl("table", { class: "stats compact" });
+  const head = table.createTHead().insertRow();
+  head.append(htmlEl("th", {}, ""));
+  groups.forEach((group, index) => {
+    const th = htmlEl("th");
+    th.append(groupKey(index, `Trained ${group.phrase}`));
+    head.append(th);
+  });
+  head.append(htmlEl("th", {}, "Difference"));
+  const body = table.createTBody();
+  for (const [key, label, format, formatDifference] of rows) {
+    const result = question.results[key];
+    const row = body.insertRow();
+    row.insertCell().textContent = label;
+    row.insertCell().textContent = format(result.a);
+    row.insertCell().textContent = format(result.b);
+    const bare = (value) => formatDifference(value).replace(" points", "");
+    row.insertCell().append(htmlEl("div", {}, `${formatDifference(result.difference)} · ${result.clear ? "clear" : "not clear"}`),
+      htmlEl("div", { class: "num small" },
+             `95% interval ${bare(result.ci95[0])} to ${bare(result.ci95[1])} · ${formatP(result.p_value)}`));
+  }
+  wrapper.append(table);
+
+  const dots = drawRunDots(question.per_run.map((runs) => runs.map((run) => ({ ...run, value: run.reliability }))),
+    { low: 0, high: 1, format: (value) => `${Math.round(value * 100)}%`, label: "Reliability of each run",
+      tooltip: (run) => [[`${Math.round(run.reliability * 100)}%`, "of evaluations at 95% survival or more"],
+                         [run.deaths_starvation.toFixed(0), "starvation deaths per 1,000 episodes"],
+                         [run.deaths_fire.toFixed(1), "fire deaths per 1,000 episodes"]] });
+  const curves = htmlEl("div", { class: "charts" });
+  for (const metric of ["survival", "deaths_starvation", "deaths_fire"]) {
+    const chart = makeCurveChart(metric);
+    if (chart) curves.append(chart);
+  }
+  const how = htmlEl("p", { class: "how" },
+    `How to read: survival swings late in training, as agents forget and relearn how to stay fed. Reliability ` +
+    `counts how often a run is doing well: the share of its ${question.evaluations_per_run} evaluations after ` +
+    `100k steps with at least 95% survival. Deaths are counted over the same evaluations ` +
+    `(${question.evaluations_per_run} × 64 test episodes per run). In the dot plot each dot is one run (click to ` +
+    "watch it); the black bar is the group's mean. The curves show every run's ups and downs: the line is the " +
+    "mean over runs, the band spans the lowest to the highest run.");
+  return [wrapper, groupLegend(), dots, curves, how];
+}
+
+// One dot per run for each group, with the group mean; dots open the run when clicked.
+function drawRunDots(perRun, { low, high, format, label, tooltip }) {
+  const { groups } = experiment;
+  const WIDTH = 640, ROW = 44, LEFT = 170, RIGHT = 16, TOP = 8, AXIS = 22;
+  const height = TOP + ROW * groups.length + AXIS;
+  const toX = (value) => LEFT + (WIDTH - LEFT - RIGHT) * (value - low) / (high - low);
+  const wrapper = htmlEl("div", { class: "chart-wide" });
+  const svg = svgEl("svg", { viewBox: `0 0 ${WIDTH} ${height}`, role: "img", "aria-label": label }, wrapper);
+  const axisY = TOP + ROW * groups.length;
+  const step = niceStep(high - low);
+  for (let tick = low; tick <= high + step / 2; tick += step) {
+    svgEl("line", { x1: toX(tick), x2: toX(tick), y1: TOP, y2: axisY, style: "stroke:var(--line)" }, svg);
+    svgEl("text", { x: toX(tick), y: axisY + 15, "text-anchor": "middle" }, svg).textContent = format(tick);
+  }
+  groups.forEach((group, groupIndex) => {
+    const centerY = TOP + ROW * groupIndex + ROW / 2;
+    svgEl("text", { x: 0, y: centerY + 4, class: "row-label" }, svg).textContent = `Trained ${group.phrase}`;
+    const runs = perRun[groupIndex];
+    const mean = runs.reduce((sum, run) => sum + run.value, 0) / runs.length;
+    const meanBar = svgEl("line", { x1: toX(mean), x2: toX(mean), y1: centerY - 15, y2: centerY + 15,
+                                    style: "stroke:var(--ink);stroke-width:2;stroke-linecap:round" }, svg);
+    runs.forEach((run, runIndex) => {
+      const y = centerY + [-7, 0, 7][runIndex % 3];  // spread close dots vertically
+      const dot = svgEl("g", { class: "dot", tabindex: 0, role: "link",
+                               "aria-label": `Seed ${run.seed}: ${format(run.value)}` }, svg);
+      svgEl("circle", { cx: toX(run.value), cy: y, r: 12, fill: "transparent" }, dot);  // hit area
+      svgEl("circle", { cx: toX(run.value), cy: y, r: 5, fill: seriesColor(groupIndex),
+                        style: "stroke:var(--bg);stroke-width:2" }, dot);
+      addTooltip(dot, `Trained ${group.phrase} · seed ${run.seed} (click to open)`, tooltip(run));
+      const open = () => { hideTooltip(); location.hash = encodeURIComponent(run.name); };
+      dot.addEventListener("click", open);
+      dot.addEventListener("keydown", (event) => { if (event.key === "Enter") open(); });
+    });
+    meanBar.parentNode.append(meanBar);  // keep the mean on top of the dots
+  });
+  return wrapper;
+}
+
+// Section kind "explanations": each hypothesis with its prediction and planned tests (written by us, not measured).
+function drawExplanations(question) {
+  const elements = [htmlEl("p", {}, "")];
+  elements[0].append(htmlEl("span", { class: "tag" }, "Our hypotheses, not measured results"));
+  for (const hypothesis of question.hypotheses) {
+    const card = htmlEl("div", { class: "callout" });
+    const title = htmlEl("div", { class: "callout-title" }, `${hypothesis.name} `);
+    title.append(htmlEl("span", { class: "tag" }, "not tested yet"));
+    card.append(title, htmlEl("p", { class: "answer" }, hypothesis.idea));
+    const prediction = htmlEl("p", { class: "answer" });
+    prediction.append(htmlEl("b", {}, "Prediction: "), document.createTextNode(hypothesis.prediction));
+    const testsLabel = htmlEl("p", { class: "answer" });
+    testsLabel.append(htmlEl("b", {}, "Tests:"));
+    const tests = htmlEl("ul", { class: "answer" });
+    tests.append(...hypothesis.tests.map((text) => htmlEl("li", {}, text)));
+    card.append(prediction, testsLabel, tests);
+    elements.push(card);
+  }
+  return elements;
+}
+
+// Section kind "test_dependence": every group's networks tested in every group's setting.
+function drawTestDependence(question) {
+  const { groups } = experiment;
+  const wrapper = htmlEl("div", { class: "table-wrap" });
+  const table = htmlEl("table", { class: "stats grid" });
+  const head = table.createTHead().insertRow();
+  head.append(htmlEl("th", {}, "Survival"));
+  groups.forEach((group) => head.append(htmlEl("th", {}, `Tested ${group.phrase}`)));
+  const body = table.createTBody();
+  groups.forEach((trained, trainedIndex) => {
+    const row = body.insertRow();
+    row.insertCell().append(groupKey(trainedIndex, `Trained ${trained.phrase}`));
+    groups.forEach((tested, testedIndex) => {
+      const cell = question.grid[trainedIndex][testedIndex];
+      const td = row.insertCell();
+      td.append(htmlEl("div", { class: "cell-value" }, fmt(cell.mean)),
+                htmlEl("div", { class: "num" }, `± ${fmt(cell.sd)}${trainedIndex === testedIndex ? " · as trained" : ""}`));
+    });
+  });
+  wrapper.append(table);
+  const [base, other] = groups.map((group) => group.phrase);
+  const how = htmlEl("p", { class: "how" },
+    `How to read: rows are how agents were trained, columns how they were tested (each run's final network on ` +
+    `${question.layouts} layouts; mean ± standard deviation over runs). Along the "trained ${other}" row: does ` +
+    `removing the NPC at test time matter? Down the "tested ${base}" column: with the test identical, does ` +
+    "training with the NPC still help?");
+  return [wrapper, how];
+}
+
+function drawDetails() {
+  const { groups, details } = experiment;
+  const [base, other] = groups.map((group) => group.phrase);
+  const robustness = [];
+  const first = experiment.questions.find((question) => question.kind === "better");
+  if (first) {
+    robustness.push(`Consistency: picking one run from each group at random, the run trained ${other} is the more ` +
+      `reliable one ${Math.round(first.probability_of_superiority * 100)}% of the time (50% would mean no ` +
+      "difference).");
+  }
+  if (details.learning_speed) {
+    const speed = details.learning_speed;
+    robustness.push(`Learning speed: steps until a run first reaches 95% survival, ${Math.round(speed.b / 1000)}k ` +
+      `trained ${other} against ${Math.round(speed.a / 1000)}k trained ${base}; difference ` +
+      `${interval(speed, (value) => `${signed(value / 1000, 0)}k`)}.`);
+  }
+  const stability = details.stability;
+  robustness.push(`Stability: lowest single evaluation in the second half of training, ${fmt(stability.b)} trained ` +
+    `${other} against ${fmt(stability.a)} trained ${base}; difference ${interval(stability)}.`);
+  $("exp-robustness").replaceChildren(...robustness.map((text) => htmlEl("li", {}, text)));
+
+  // All metrics
+  const table = $("exp-summary");
+  table.replaceChildren();
+  const head = table.createTHead().insertRow();
+  head.append(htmlEl("th", {}, "Metric"));
+  groups.forEach((group, index) => {
+    const th = htmlEl("th");
+    th.append(groupKey(index, `Trained ${group.phrase}`));
+    head.append(th);
+  });
+  ["Difference", "95% interval", "p"].forEach((name) => head.append(htmlEl("th", {}, name)));
+  const body = table.createTBody();
+  for (const metric of Object.keys(experiment.metrics)) {
+    const row = body.insertRow();
+    row.insertCell().textContent = metricName(metric);
+    for (const group of groups) {
+      const summary = group.summary[metric];
+      const td = row.insertCell();
+      if (!summary) { td.textContent = "—"; continue; }
+      td.append(htmlEl("div", {}, `${fmt(summary.mean)} ± ${fmt(summary.sd)}`));
+      if (group.random[metric] != null) td.append(htmlEl("div", { class: "num small" }, `random ${fmt(group.random[metric])}`));
+    }
+    const result = details.comparison[metric];
+    row.insertCell().textContent = result ? signed(result.difference) : "";
+    row.insertCell().textContent = result ? `${signed(result.ci95[0])} to ${signed(result.ci95[1])}` : "";
+    row.insertCell().textContent = result ? formatP(result.p_value).replace("p = ", "").replace("p ", "") : "";
+  }
+
+  drawExperimentCurves();
+
+  // Runs, linking to their replays
+  const runs = $("exp-runs");
+  runs.replaceChildren();
+  groups.forEach((group, index) => {
+    const line = htmlEl("p");
+    line.append(groupKey(index, `Trained ${group.phrase}: `));
+    group.runs.forEach((run, runIndex) => {
+      if (runIndex) line.append(document.createTextNode(" · "));
+      line.append(htmlEl("a", { href: `#${encodeURIComponent(run.name)}` }, `seed ${run.seed}`));
+    });
+    runs.append(line);
+  });
+}
+
+// Learning curves: every group's mean line and lowest-to-highest band for one metric, with a crosshair tooltip.
+function drawExperimentCurves() {
+  const { groups, metrics } = experiment;
+  $("exp-legend").replaceChildren(...groups.map((group, index) => groupKey(index, `Trained ${group.phrase}`)));
+  $("exp-curves").replaceChildren(...Object.keys(metrics).map(makeCurveChart).filter(Boolean));
+}
+
+function makeCurveChart(metric) {
+  const { groups } = experiment;
+  const WIDTH = 320, HEIGHT = 140, PADDING = { left: 34, right: 8, top: 6, bottom: 16 };
+  const label = metricName(metric);
+  const present = groups.map((group, index) => [group, index]).filter(([group]) => group.curves[metric]);
+  if (!present.length) return null;
+  const steps = present[0][0].curves.env_steps;
+  const all = present.flatMap(([group]) => [...group.curves[metric].min, ...group.curves[metric].max]);
+  const randoms = present.map(([group]) => group.random[metric]).filter((value) => value != null);
+  // Random play dies far more often than trained agents, so it's left off the death charts to keep them readable
+  const randomValue = randoms.length && !metric.startsWith("deaths_") ? randoms.reduce((a, b) => a + b) / randoms.length : null;
+  let low = Math.min(...all, randomValue ?? Infinity), high = Math.max(...all, randomValue ?? -Infinity);
+  if (["survival", "npc_survival"].includes(metric)) { low = 0; high = 1; }
+  if (metric.startsWith("deaths_")) low = 0;
+  if (high === low) high = low + 1;
+  const maxSteps = Math.max(...steps, 1);
+  const toX = (value) => PADDING.left + (WIDTH - PADDING.left - PADDING.right) * (value / maxSteps);
+  const toY = (value) => PADDING.top + (HEIGHT - PADDING.top - PADDING.bottom) * (1 - (value - low) / (high - low));
+
+  const chart = htmlEl("div", { class: "chart" });
+  chart.append(htmlEl("div", { class: "head" }, label));
+  const svg = svgEl("svg", { viewBox: `0 0 ${WIDTH} ${HEIGHT}`, role: "img", "aria-label": label }, chart);
+  const right = WIDTH - PADDING.right;
+  for (const value of [low, high]) {
+    svgEl("line", { x1: PADDING.left, x2: right, y1: toY(value), y2: toY(value), style: "stroke:var(--line)" }, svg);
+    svgEl("text", { x: PADDING.left - 4, y: toY(value) + 3, "text-anchor": "end" }, svg).textContent =
+      +value.toFixed(2);
+  }
+  svgEl("text", { x: PADDING.left, y: HEIGHT - 3 }, svg).textContent = "0";
+  svgEl("text", { x: right, y: HEIGHT - 3, "text-anchor": "end" }, svg).textContent =
+    `${Math.round(maxSteps / 1000)}k env steps`;
+  if (randomValue != null) {
+    svgEl("line", { x1: PADDING.left, x2: right, y1: toY(randomValue), y2: toY(randomValue),
+                    style: "stroke:var(--muted);stroke-dasharray:4 3" }, svg);
+  }
+  for (const [group, index] of present) {
+    const curve = group.curves[metric];
+    const upper = steps.map((step, i) => `${toX(step)},${toY(curve.max[i])}`);
+    const lower = steps.map((step, i) => `${toX(step)},${toY(curve.min[i])}`).reverse();
+    svgEl("polygon", { points: [...upper, ...lower].join(" "), fill: seriesColor(index), "fill-opacity": 0.14 }, svg);
+  }
+  for (const [group, index] of present) {
+    const curve = group.curves[metric];
+    svgEl("polyline", { points: steps.map((step, i) => `${toX(step)},${toY(curve.mean[i])}`).join(" "),
+                        style: `fill:none;stroke:${seriesColor(index)};stroke-width:2;stroke-linejoin:round` }, svg);
+  }
+
+  // Crosshair: snaps to the nearest evaluation and lists every group there
+  const crosshair = svgEl("line", { y1: PADDING.top, y2: HEIGHT - PADDING.bottom, visibility: "hidden",
+                                    style: "stroke:var(--muted)" }, svg);
+  const overlay = svgEl("rect", { x: PADDING.left, y: 0, width: right - PADDING.left, height: HEIGHT,
+                                  fill: "transparent" }, svg);
+  overlay.addEventListener("pointermove", (event) => {
+    const box = svg.getBoundingClientRect();
+    const x = (event.clientX - box.left) * (WIDTH / box.width);
+    let nearest = 0;
+    steps.forEach((step, i) => { if (Math.abs(toX(step) - x) < Math.abs(toX(steps[nearest]) - x)) nearest = i; });
+    crosshair.setAttribute("x1", toX(steps[nearest]));
+    crosshair.setAttribute("x2", toX(steps[nearest]));
+    crosshair.setAttribute("visibility", "visible");
+    const rows = present.map(([group, index]) => {
+      const curve = group.curves[metric];
+      return [fmt(curve.mean[nearest]),
+              `trained ${group.phrase} (${fmt(curve.min[nearest])}–${fmt(curve.max[nearest])})`, seriesColor(index)];
+    });
+    showTooltip(event, `${label} · ${Math.round(steps[nearest] / 1000)}k env steps`, rows);
+  });
+  overlay.addEventListener("pointerleave", () => { crosshair.setAttribute("visibility", "hidden"); hideTooltip(); });
+  return chart;
+}
+
+// ---- Views ----------------------------------------------------------------------------------------------------------
+
+// The address picks the view: #<experiment id> shows that experiment's tab; anything else (#<run name> or nothing)
+// shows the runs.
+function currentView() {
+  const requested = decodeURIComponent(location.hash.slice(1));
+  return experimentList.some((entry) => entry.id === requested) ? requested : "runs";
+}
+
+function showView() {
+  const view = currentView();
+  for (const tab of $("tabs").querySelectorAll("a")) {
+    if (tab.dataset.view === view) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
+  }
+  hideTooltip();
+  $("runs-view").hidden = view !== "runs";
+  $("experiment-view").hidden = view === "runs";
+  if (view === "runs") drawReplay(); else { setPlaying(false); loadExperiment(view); }
 }
 
 // ---- Playback and controls ------------------------------------------------------------------------------------------
@@ -334,6 +893,7 @@ $("run").onchange = (event) => { location.hash = encodeURIComponent(event.target
 window.addEventListener("hashchange", () => {
   const name = decodeURIComponent(location.hash.slice(1));
   if (runList.some((run) => run.name === name) && name !== currentRun) loadRun(name);
+  showView();
 });
 $("checkpoint").onchange = (event) => {
   checkpointIndex = Number(event.target.value);
@@ -360,7 +920,22 @@ themeObserver.observe(document.documentElement, { attributes: true, attributeFil
 
 // ---- Start ----------------------------------------------------------------------------------------------------------
 
-getJson("outputs/runs.json")
+// The experiment tabs come from outputs/experiments.json, if any experiment has been analysed
+getJson("outputs/experiments.json")
+  .catch(() => [])
+  .then((experiments) => {
+    experimentList = experiments;
+    for (const entry of experiments) {
+      const tab = document.createElement("a");
+      tab.href = `#${encodeURIComponent(entry.id)}`;
+      tab.dataset.view = entry.id;
+      tab.textContent = entry.title.split(":")[0];
+      tab.title = entry.title;
+      $("tabs").append(tab);
+    }
+    showView();
+    return getJson("outputs/runs.json");
+  })
   .then((runs) => {
     runList = runs;
     if (!runs.length) return showError("No runs yet. Train one with train_gridworld.py.");

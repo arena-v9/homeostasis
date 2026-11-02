@@ -10,6 +10,7 @@ gitignored. Each run gets its own folder of JSON files:
           run.json            settings (training args, environment config) and final results
           curves.json         evaluation results over training
           replay.json         recorded episodes at each training stage (layout in runs/recording.py)
+          q_network.pt        the trained Q-network's weights
 
 To look at them, serve the ui folder (`cd ui && python -m http.server 8000`) and open http://localhost:8000/.
 Browsers don't let a page opened straight from disk load the JSON files, so opening index.html directly won't work.

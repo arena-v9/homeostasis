@@ -66,9 +66,11 @@ class ReplayBuffer:
         rewards: Float[Tensor, " num_envs"],
         terminated: Bool[Tensor, " num_envs"],
         next_obs: Float[Tensor, " num_envs *obs_shape"],
+        keep: Bool[Tensor, " num_envs"] | None = None,
     ) -> None:
         """
-        Add a batch of transitions to the replay buffer.
+        Add a batch of transitions to the replay buffer. If `keep` is given, only the transitions where it's True are
+        added (e.g. to drop transitions the environment flagged as discarded).
         """
         # Check shapes & datatypes (writing into the storage would silently cast a wrong dtype)
         for name, data, expected_shape, expected_dtype in zip(
@@ -81,15 +83,21 @@ class ReplayBuffer:
             assert data.shape == (self.num_envs, *expected_shape), f"`{name}` has shape {tuple(data.shape)}, expected {(self.num_envs, *expected_shape)}"
             assert data.dtype == expected_dtype, f"`{name}` has dtype {data.dtype}, expected {expected_dtype}"
 
+        if keep is not None:
+            obs, actions, rewards, terminated, next_obs = (
+                data[keep] for data in (obs, actions, rewards, terminated, next_obs)
+            )
+        num_added = obs.shape[0]
+
         # Write over the oldest rows, wrapping around the end of the storage
-        idx = (self.pos + t.arange(self.num_envs, device=self.device)) % self.buffer_size
+        idx = (self.pos + t.arange(num_added, device=self.device)) % self.buffer_size
         self._obs[idx] = obs
         self._actions[idx] = actions
         self._rewards[idx] = rewards
         self._terminated[idx] = terminated
         self._next_obs[idx] = next_obs
-        self.pos = (self.pos + self.num_envs) % self.buffer_size
-        self.size = min(self.size + self.num_envs, self.buffer_size)
+        self.pos = (self.pos + num_added) % self.buffer_size
+        self.size = min(self.size + num_added, self.buffer_size)
 
     def sample(self, sample_size: int) -> ReplayBufferSamples:
         """

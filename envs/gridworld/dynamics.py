@@ -10,7 +10,8 @@ Order of one step:
      wall fails and neither body moves. If the push would put the NPC on a tile that hurts it (and
      `config.discard_harmful_pushes`), nothing happens and the result is flagged `discarded`, so the caller can
      drop the transition and restart the episode.
-  2. The NPC moves. Walls and the agent block it; it never pushes.
+  2. The NPC moves, unless the agent just pushed it: its action was chosen from the state before the step, so applying
+     it from the square it was pushed to could walk it onto fire. Walls and the agent block it; it never pushes.
   3. Eaten food items count down, and any that reach 0 respawn on a random empty floor square.
   4. Each living body updates (see `_update_body`): energy falls by `energy_decay` and rises by eating; health
      regenerates while energy > 0, takes the damage of the tile it stands on, and drains by `starvation_damage`
@@ -57,6 +58,7 @@ class StepResult:
     coupled_drive: float = 0.0  # the agent's drive (plus the NPC's, if coupled) after the step
     agent_on_hazard: bool = False  # for the verification logs
     npc_on_hazard: bool = False
+    npc_pushed: bool = False  # the agent pushed the NPC this step (discarded pushes don't count)
     npc_died: bool = False
 
 
@@ -147,8 +149,10 @@ def take_step(
     if _move_agent(next_state, agent_action, config):
         return StepResult(next_state=state.copy(), reward=0.0, terminated=False, truncated=False, discarded=True)
 
-    # 2. NPC moves
-    _move_npc(next_state, npc_action)
+    # 2. NPC moves, unless it was just pushed (its action was chosen from the square it was pushed off)
+    npc_pushed = next_state.npc.position != state.npc.position
+    if not npc_pushed:
+        _move_npc(next_state, npc_action)
 
     # 3. Food respawns (before eating, so an item eaten at step t reappears at step t + food_respawn_steps)
     _respawn_food(next_state, rng)
@@ -177,5 +181,6 @@ def take_step(
         coupled_drive=coupled_drive(next_state, config),
         agent_on_hazard=config.agent_damage(agent_tile) > 0,
         npc_on_hazard=npc_on_hazard,
+        npc_pushed=npc_pushed,
         npc_died=npc_died,
     )
