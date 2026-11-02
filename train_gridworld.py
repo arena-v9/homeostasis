@@ -6,15 +6,15 @@ an experiment changes only what it passes and everything else keeps its default.
 
     python train_gridworld.py --npc-enabled false --seed 1   # the agent alone, without the NPC
     python train_gridworld.py --npc-state-visible false --drop-npc-harm true --seed 2
-    python train_gridworld.py --npc-drive-weight 0.5
+    python train_gridworld.py --parallel-grid true --seed 3   # the NPC on a grid of its own
 
 Every `--eval-every` training steps it evaluates the greedy policy on the same 64 fixed layouts (one episode each) and
-records survival rate, return, steps on fire, food eaten, pushes of the NPC, the NPC's steps on fire and the NPC's
-survival rate. It also records 16 full episodes before training and at
-25/50/75/100% of training. At the end it compares against a random policy and saves the run as JSON in its own
-folder, ui/outputs/runs/<date-time>/ (see runs/outputs.py):
+records survival rate, deaths by cause, return, steps on fire, food eaten, pushes of the NPC, the NPC's steps on fire and
+the NPC's survival rate, plus catastrophic-forgetting diagnostics (runs/diagnostics.py). It also records 16 full
+episodes before training and at 25/50/75/100% of training. At the end it compares against a random policy and saves
+the run as JSON in its own folder, ui/outputs/runs/<date-time>/ (see runs/outputs.py):
     run.json      settings (including the full config and the settings changed from the defaults) and final results
-    curves.json   the evaluations over training
+    curves.json   the evaluations and diagnostics over training
     replay.json   the recorded episodes
     q_network.pt  the trained Q-network's weights (for the evaluation harness)
 
@@ -23,9 +23,7 @@ To look at it: cd ui && python -m http.server 8000, then open http://localhost:8
 
 import argparse
 import time
-from dataclasses import replace
 from datetime import datetime
-from typing import Callable
 
 import torch as t
 from tqdm.auto import tqdm
@@ -34,13 +32,13 @@ from dqn.args import DQNArgs
 from dqn.trainer import DQNTrainer
 from envs.gridworld.batched_env import BatchedGridworldEnv
 from envs.gridworld.config import GridworldConfig
-from envs.gridworld.observation import CHANNEL_INDEX
 from flags import add_dataclass_flags, dataclass_from_flags
+from runs import diagnostics
+from runs.evaluation import evaluate, metric_labels
 from runs.outputs import new_run_dir, register_run, write_json
 from runs.recording import record_episodes, replay_data
 
 NUM_ENVS = 16  # gridworlds run side by side during training (one gradient step per NUM_ENVS new transitions)
-EVAL_ENVS, EVAL_SEED = 64, 12345
 REPLAY_SEEDS = range(1000, 1016)  # the same 16 layouts at every checkpoint
 REPLAY_CHECKPOINTS = (0.25, 0.5, 0.75, 1.0)  # fractions of training after which episodes are recorded
 
@@ -50,7 +48,6 @@ def parse_cli() -> argparse.Namespace:
     parser.add_argument("--timesteps", type=int, default=200_000)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--eval-every", type=int, default=500, help="training steps between evaluations")
-    parser.add_argument("--wandb", action="store_true")
     add_dataclass_flags(parser, GridworldConfig, "gridworld config (defaults in envs/gridworld/config.py)")
     return parser.parse_args()
 
@@ -59,7 +56,8 @@ def make_dqn_args(cli: argparse.Namespace) -> DQNArgs:
     return DQNArgs(
         seed=cli.seed,
         total_timesteps=cli.timesteps,
-        buffer_size=100_000,  # large enough to keep early failures (deaths, fire) after the agent stops making them
+        buffer_size=100_000,
+        buffer_death_share=0.05,  # about 6 deaths in every batch, so the agent doesn't forget them (see ReplayBuffer)
         learning_starts=20_000,
         batch_size=128,
         learning_rate=5e-4,
@@ -68,8 +66,6 @@ def make_dqn_args(cli: argparse.Namespace) -> DQNArgs:
         exploration_fraction=0.3,
         start_e=1.0,
         end_e=0.05,
-        use_wandb=cli.wandb,
-        wandb_project_name="Gridworld",
     )
 
 
@@ -79,74 +75,6 @@ def describe_changes(changes: dict) -> str:
         return "defaults"
     format_value = lambda value: str(value).lower() if isinstance(value, bool) else value
     return ", ".join(f"{name}={format_value(value)}" for name, value in changes.items())
-
-
-def metric_labels(config: GridworldConfig) -> dict[str, str]:
-    """The evaluation results, in the order they're reported, with their labels for the viewer's charts."""
-    labels = {
-        "survival": f"Survived all {config.max_steps} steps (fraction)",
-        "deaths_starvation": "Died of starvation (fraction of episodes)",
-        "deaths_fire": "Died in fire (fraction of episodes)",
-        "return": "Episode return",
-        "fire_steps": "Steps on fire per episode",
-        "food_eaten": "Food eaten per episode",
-        "pushes": "Pushes of the NPC per episode",
-        "npc_fire_steps": "NPC steps on fire per episode",
-        "npc_survival": "NPC alive when the episode ended (fraction)",
-    }
-    if not config.npc_enabled:
-        del labels["npc_survival"]
-    return labels
-
-
-@t.inference_mode()
-def evaluate(
-    act_fn: Callable[[t.Tensor], t.Tensor],
-    config: GridworldConfig,
-    device: t.device,
-    num_layouts: int = EVAL_ENVS,
-) -> dict[str, float]:
-    """
-    Runs one full episode on each of `num_layouts` fixed layouts and averages over them. Returns the metrics named in
-    `metric_labels`. NPC survival is whether the NPC is still alive when the agent's episode ends (after max_steps, or
-    when the agent dies). A death counts as "fire" if the agent died standing on fire and as "starvation" otherwise
-    (the only other way to lose health).
-    """
-    agent_energy = lambda obs: (obs[:, CHANNEL_INDEX["energy"]] * obs[:, CHANNEL_INDEX["self"]]).sum((-1, -2))
-    # Evaluation episodes run to the end even when the NPC is hurt: dropping is only for what the agent trains on
-    env = BatchedGridworldEnv(num_layouts, EVAL_SEED, device, replace(config, drop_npc_harm=False))
-    obs, _ = env.reset()
-    alive = t.ones(num_layouts, dtype=t.bool, device=obs.device)
-    npc_alive = alive.clone()
-    episode_return, fire_steps, food_eaten, pushes, npc_fire_steps, deaths_fire, deaths_starvation = (
-        t.zeros(num_layouts, device=obs.device) for _ in range(7)
-    )
-    for _ in range(config.max_steps):
-        next_obs, reward, terminated, truncated, infos = env.step(act_fn(obs))
-        episode_return += reward * alive
-        fire_steps += infos["agent_on_hazard"].float() * alive
-        pushes += infos["npc_pushed"].float() * alive
-        npc_fire_steps += infos["npc_on_hazard"].float() * alive
-        ate = agent_energy(next_obs) > agent_energy(obs)  # energy only goes up by eating
-        food_eaten += (ate & ~terminated & alive).float()
-        npc_alive &= ~(infos["npc_died"] & alive)
-        died_now = terminated & alive
-        deaths_fire += (died_now & infos["agent_on_hazard"]).float()
-        deaths_starvation += (died_now & ~infos["agent_on_hazard"]).float()
-        alive &= ~terminated  # count each env's first episode only
-        obs = next_obs
-    results = {
-        "survival": alive.float().mean().item(),
-        "deaths_starvation": deaths_starvation.mean().item(),
-        "deaths_fire": deaths_fire.mean().item(),
-        "return": episode_return.mean().item(),
-        "fire_steps": fire_steps.mean().item(),
-        "food_eaten": food_eaten.mean().item(),
-        "pushes": pushes.mean().item(),
-        "npc_fire_steps": npc_fire_steps.mean().item(),
-        "npc_survival": npc_alive.float().mean().item(),
-    }
-    return {key: results[key] for key in metric_labels(config)}
 
 
 def train_with_checkpoints(
@@ -161,7 +89,15 @@ def train_with_checkpoints(
     """
     device = trainer.args.device
     greedy = lambda obs: trainer.q_network(obs).argmax(-1)
-    evaluate_now = lambda: {"env_steps": trainer.agent.step, **evaluate(greedy, config, device)}
+    # Catastrophic-forgetting diagnostics (runs/diagnostics.py), with their own random generator so they don't change
+    # training
+    probes = diagnostics.build_probes(config, device)
+    diagnostics_rng = t.Generator(device=device).manual_seed(diagnostics.PROBE_SEED)
+    evaluate_now = lambda: {
+        "env_steps": trainer.agent.step,
+        **evaluate(greedy, config, device),
+        **diagnostics.diagnose(trainer, probes, diagnostics_rng),
+    }
     record = lambda: record_episodes(greedy, config, REPLAY_SEEDS, device)
     replay_at = {int(trainer.total_training_steps * fraction): fraction for fraction in REPLAY_CHECKPOINTS}
 
@@ -198,7 +134,8 @@ def save_run(
     changes = config.changes_from_defaults()
     final = history[-1]
     run_dir = new_run_dir()
-    curves = {"metrics": metric_labels(config), "random": random_baseline, "history": history}
+    curves = {"metrics": metric_labels(config), "diagnostics": diagnostics.LABELS, "random": random_baseline,
+              "history": history}
     write_json(run_dir / "curves.json", curves)
     write_json(run_dir / "replay.json", replay_data(replays))
     t.save(trainer.q_network.state_dict(), run_dir / "q_network.pt")

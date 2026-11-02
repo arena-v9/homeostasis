@@ -23,17 +23,21 @@ class ReplayBufferSamples:
     next_obs: Float[Tensor, " sample_size *obs_shape"]
 
 
+FIELDS = ("obs", "actions", "rewards", "terminated", "next_obs")
+
+
 class ReplayBuffer:
     """
-    Contains buffer; has a method to sample from it to return a ReplayBufferSamples object.
+    Stores transitions and samples training batches from them.
 
-    A circular buffer: storage is allocated once at `buffer_size` and each `add` overwrites the oldest rows, so adding
-    costs the same however full the buffer is. (ARENA's version concatenated and re-sliced the whole buffer on every
-    add, which copies all of it each time.) The `obs`, `actions`, ... attributes return the stored transitions in the
-    order they were added, oldest first.
+    The main store holds the latest `buffer_size` transitions; once it's full, each new transition overwrites the
+    oldest. Once an agent stops dying, deaths drain out of it and the agent forgets what they look like (catastrophic
+    forgetting). So with `death_share` > 0, every transition that ends the episode is also copied into a small death
+    store (the latest buffer_size * death_share of them), and each batch takes `death_share` of its transitions from
+    there once it holds any. E.g. death_share = 0.05 puts about 6 deaths in every batch of 128.
+
+    The `obs`, `actions`, ... attributes return the main store's transitions, oldest first.
     """
-
-    rng: t.Generator
 
     def __init__(
         self,
@@ -43,21 +47,23 @@ class ReplayBuffer:
         buffer_size: int,
         seed: int,
         device: t.device = device,
+        death_share: float = 0.0,
     ):
+        assert 0 <= death_share < 1, "death_share must be at least 0 and below 1"
         self.num_envs = num_envs
         self.obs_shape = obs_shape
         self.action_shape = action_shape
         self.buffer_size = buffer_size
+        self.death_share = death_share
         self.device = t.device(device)
         self.rng = t.Generator(device=self.device).manual_seed(seed)
+        self.main = _CircularStore(buffer_size, obs_shape, action_shape, self.device)
+        self.deaths = _CircularStore(round(buffer_size * death_share), obs_shape, action_shape, self.device)
 
-        self._obs = t.empty((buffer_size, *self.obs_shape), dtype=t.float32, device=self.device)
-        self._actions = t.empty((buffer_size, *self.action_shape), dtype=t.int64, device=self.device)
-        self._rewards = t.empty(buffer_size, dtype=t.float32, device=self.device)
-        self._terminated = t.empty(buffer_size, dtype=t.bool, device=self.device)
-        self._next_obs = t.empty((buffer_size, *self.obs_shape), dtype=t.float32, device=self.device)
-        self.pos = 0  # next row to write
-        self.size = 0  # rows filled so far (at most buffer_size)
+    @property
+    def size(self) -> int:
+        """Transitions in the main store."""
+        return self.main.count
 
     def add(
         self,
@@ -72,71 +78,99 @@ class ReplayBuffer:
         Add a batch of transitions to the replay buffer. If `keep` is given, only the transitions where it's True are
         added (e.g. to drop transitions the environment flagged as discarded).
         """
-        # Check shapes & datatypes (writing into the storage would silently cast a wrong dtype)
-        for name, data, expected_shape, expected_dtype in zip(
-            ["obs", "actions", "rewards", "terminated", "next_obs"],
-            [obs, actions, rewards, terminated, next_obs],
-            [self.obs_shape, self.action_shape, (), (), self.obs_shape],
-            [t.float32, t.int64, t.float32, t.bool, t.float32],
-        ):
-            assert isinstance(data, Tensor), f"`{name}` should be a tensor, got {type(data)}"
-            assert data.shape == (self.num_envs, *expected_shape), f"`{name}` has shape {tuple(data.shape)}, expected {(self.num_envs, *expected_shape)}"
-            assert data.dtype == expected_dtype, f"`{name}` has dtype {data.dtype}, expected {expected_dtype}"
-
+        new = dict(zip(FIELDS, (obs, actions, rewards, terminated, next_obs)))
+        self._check(new)
         if keep is not None:
-            obs, actions, rewards, terminated, next_obs = (
-                data[keep] for data in (obs, actions, rewards, terminated, next_obs)
-            )
-        num_added = obs.shape[0]
+            new = {name: data[keep] for name, data in new.items()}
+        self.main.add(new)
+        if self.deaths.capacity:
+            self.deaths.add({name: data[new["terminated"]] for name, data in new.items()})
 
-        # Write over the oldest rows, wrapping around the end of the storage
-        idx = (self.pos + t.arange(num_added, device=self.device)) % self.buffer_size
-        self._obs[idx] = obs
-        self._actions[idx] = actions
-        self._rewards[idx] = rewards
-        self._terminated[idx] = terminated
-        self._next_obs[idx] = next_obs
-        self.pos = (self.pos + num_added) % self.buffer_size
-        self.size = min(self.size + num_added, self.buffer_size)
+    def _check(self, new: dict[str, Tensor]) -> None:
+        """Checks shapes and dtypes (writing into the storage would silently cast a wrong dtype)."""
+        expected = {
+            "obs": (self.obs_shape, t.float32),
+            "actions": (self.action_shape, t.int64),
+            "rewards": ((), t.float32),
+            "terminated": ((), t.bool),
+            "next_obs": (self.obs_shape, t.float32),
+        }
+        for name, data in new.items():
+            shape, dtype = (self.num_envs, *expected[name][0]), expected[name][1]
+            assert isinstance(data, Tensor), f"`{name}` should be a tensor, got {type(data)}"
+            assert data.shape == shape, f"`{name}` has shape {tuple(data.shape)}, expected {shape}"
+            assert data.dtype == dtype, f"`{name}` has dtype {data.dtype}, expected {dtype}"
 
-    def sample(self, sample_size: int) -> ReplayBufferSamples:
+    def sample(self, sample_size: int, generator: t.Generator | None = None) -> ReplayBufferSamples:
         """
-        Sample a batch of transitions from the buffer, with replacement.
+        Sample a batch of transitions, with replacement: `death_share` of it from the death store (once it holds any)
+        and the rest from the main store. Pass a `generator` to sample without using the buffer's own random stream
+        (e.g. for diagnostics that mustn't change training).
         """
-        # Independent uniform draws over the filled rows, so duplicates are possible. Until the buffer is full,
-        # the filled rows are exactly 0..size-1.
-        indices = t.randint(0, self.size, (sample_size,), generator=self.rng, device=self.device)
-
-        return ReplayBufferSamples(
-            obs=self._obs[indices],                  # s_t
-            actions=self._actions[indices],          # a_t
-            rewards=self._rewards[indices],          # r_{t+1}
-            terminated=self._terminated[indices],    # d_{t+1}: terminated (not truncated!)
-            next_obs=self._next_obs[indices],        # s_{t+1}
-        )
-
-    def _in_order(self, storage: Tensor) -> Tensor:
-        """The filled rows of `storage`, oldest first."""
-        if self.size < self.buffer_size:
-            return storage[: self.size]
-        return t.cat((storage[self.pos :], storage[: self.pos]))
+        generator = generator or self.rng
+        num_deaths = round(sample_size * self.death_share) if self.deaths.count else 0
+        main = self.main.sample(sample_size - num_deaths, generator)
+        deaths = self.deaths.sample(num_deaths, generator)
+        return ReplayBufferSamples(**{name: t.cat((main[name], deaths[name])) for name in FIELDS})
 
     @property
     def obs(self) -> Float[Tensor, " size *obs_shape"]:
-        return self._in_order(self._obs)
+        return self.main.in_order("obs")
 
     @property
     def actions(self) -> Int[Tensor, " size"]:
-        return self._in_order(self._actions)
+        return self.main.in_order("actions")
 
     @property
     def rewards(self) -> Float[Tensor, " size"]:
-        return self._in_order(self._rewards)
+        return self.main.in_order("rewards")
 
     @property
     def terminated(self) -> Bool[Tensor, " size"]:
-        return self._in_order(self._terminated)
+        return self.main.in_order("terminated")
 
     @property
     def next_obs(self) -> Float[Tensor, " size *obs_shape"]:
-        return self._in_order(self._next_obs)
+        return self.main.in_order("next_obs")
+
+
+class _CircularStore:
+    """
+    Fixed-size storage for transitions, allocated once: once full, each new transition overwrites the oldest, so adding
+    costs the same however full it is. (ARENA's version concatenated and re-sliced the whole buffer on every add.)
+    """
+
+    def __init__(self, capacity: int, obs_shape: tuple[int], action_shape: tuple[int], device: t.device):
+        self.capacity = capacity
+        self.device = device
+        self.data = {
+            "obs": t.empty((capacity, *obs_shape), dtype=t.float32, device=device),
+            "actions": t.empty((capacity, *action_shape), dtype=t.int64, device=device),
+            "rewards": t.empty(capacity, dtype=t.float32, device=device),
+            "terminated": t.empty(capacity, dtype=t.bool, device=device),
+            "next_obs": t.empty((capacity, *obs_shape), dtype=t.float32, device=device),
+        }
+        self.pos = 0  # next row to write
+        self.count = 0  # rows filled so far
+
+    def add(self, new: dict[str, Tensor]) -> None:
+        num_added = len(new["obs"])
+        if num_added == 0:
+            return
+        assert num_added <= self.capacity, "can't add more transitions at once than the store holds"
+        rows = (self.pos + t.arange(num_added, device=self.device)) % self.capacity
+        for name, data in new.items():
+            self.data[name][rows] = data
+        self.pos = (self.pos + num_added) % self.capacity
+        self.count = min(self.count + num_added, self.capacity)
+
+    def sample(self, sample_size: int, generator: t.Generator) -> dict[str, Tensor]:
+        """Independent uniform draws over the filled rows, which are exactly 0..count-1 until the store is full."""
+        rows = t.randint(0, max(self.count, 1), (sample_size,), generator=generator, device=self.device)
+        return {name: data[rows] for name, data in self.data.items()}
+
+    def in_order(self, name: str) -> Tensor:
+        """One field of the stored transitions, oldest first."""
+        if self.count < self.capacity:
+            return self.data[name][: self.count]
+        return t.cat((self.data[name][self.pos :], self.data[name][: self.pos]))

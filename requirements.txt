@@ -3,4 +3,3 @@ numpy
 gymnasium>=1.2,<2  # only for the observation/action space classes
 jaxtyping
 tqdm
-wandb>=0.18

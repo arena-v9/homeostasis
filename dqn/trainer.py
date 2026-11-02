@@ -1,15 +1,12 @@
-import time
-
 import torch as t
 import torch.nn.functional as F
-import wandb
 from tqdm.auto import tqdm
 
 from common import set_global_seeds
 from dqn.agent import DQNAgent
 from dqn.args import DQNArgs
 from dqn.networks import ConvQNetwork, QNetwork
-from dqn.replay_buffer import ReplayBuffer
+from dqn.replay_buffer import ReplayBuffer, ReplayBufferSamples
 from envs.gpu_env import GPUEnv
 
 
@@ -40,8 +37,6 @@ class DQNTrainer:
         self.args = args
         self.envs = envs
         self.rng = t.Generator(device=args.device).manual_seed(args.seed)
-        start_time = time.strftime("%Y%m%d-%H%M%S")
-        self.run_name = f"{type(envs).__name__}__{args.wandb_project_name}__seed{args.seed}__{start_time}"
 
         # Define some basic variables from our environment (note, we assume a single discrete action space)
         num_envs = self.envs.num_envs
@@ -56,7 +51,8 @@ class DQNTrainer:
         self.total_training_steps = (args.total_timesteps - args.learning_starts) // (args.steps_per_update * num_envs)
 
         # Create our replay buffer (on the same device as the environment)
-        self.buffer = ReplayBuffer(num_envs, obs_shape, action_shape, args.buffer_size, args.seed, args.device)
+        self.buffer = ReplayBuffer(num_envs, obs_shape, action_shape, args.buffer_size, args.seed, args.device,
+                                   death_share=args.buffer_death_share)
 
         # Create our networks & optimizer (target network should be initialized with a copy of the Q-network's weights)
         # Image observations (channels, height, width) get the gridworld CNN; flat vectors (probe envs) get the MLP
@@ -106,6 +102,21 @@ class DQNTrainer:
         warm_up_play_steps = self.args.learning_starts // self.envs.num_envs
         self.add_to_replay_buffer(warm_up_play_steps, verbose=True)
 
+    def td_loss(self, data: ReplayBufferSamples) -> t.Tensor:
+        """
+        The TD loss on a batch of transitions, with Double DQN's target (van Hasselt et al. 2016): the Q-network chooses
+        the best next action and the target network values it. Plain DQN does both with the target network, and
+        choosing and valuing with the same noisy estimates favours actions that happen to be overestimated.
+        """
+        with t.inference_mode():
+            best_next = self.q_network(data.next_obs).argmax(-1, keepdim=True)
+            next_value = self.target_network(data.next_obs).gather(-1, best_next).squeeze(-1)
+        predicted_q_vals = self.q_network(data.obs).gather(-1, data.actions.unsqueeze(-1)).squeeze(-1)
+        td_target = data.rewards + self.args.gamma * next_value * (1 - data.terminated.float())
+        # Huber loss: squared for small TD errors, linear for large ones, so one rare large error (e.g. a death) can't
+        # cause a huge update. This and gradient clipping are standard in DQN (Mnih et al. 2015's error clipping).
+        return F.smooth_l1_loss(predicted_q_vals, td_target)
+
     def training_step(self, step: int) -> None:
         """
         Samples once from the replay buffer, and takes a single optimization step.
@@ -115,19 +126,7 @@ class DQNTrainer:
             when to update the target network)
         """
         data = self.buffer.sample(self.args.batch_size)  # o_t, a_t, r_{t+1}, d_{t+1}, o_{t+1}
-
-        with t.inference_mode():
-            target_max = self.target_network(data.next_obs).max(-1).values
-        predicted_q_vals = self.q_network(data.obs).gather(-1, data.actions.unsqueeze(-1)).squeeze(-1)
-        # alternatively with eindex
-        # predicted_q_vals = eindex(self.q_network(data.obs), data.actions, "b [b] -> b")
-        # alternatively with indexing
-        # self.q_network(data.obs)[range(len(data.actions)), data.actions]
-
-        td_target = data.rewards + self.args.gamma * target_max * (1 - data.terminated.float())
-        # Huber loss: squared for small TD errors, linear for large ones, so one rare large error (e.g. a death) can't
-        # cause a huge update. This and gradient clipping are standard in DQN (Mnih et al. 2015's error clipping).
-        loss = F.smooth_l1_loss(predicted_q_vals, td_target)
+        loss = self.td_loss(data)
         loss.backward()
         t.nn.utils.clip_grad_norm_(self.q_network.parameters(), self.args.max_grad_norm)
         self.optimizer.step()
@@ -136,44 +135,13 @@ class DQNTrainer:
         if step % self.args.trains_per_target_update == 0:
             self.target_network.load_state_dict(self.q_network.state_dict())
 
-        # Log every 10th step
-        if self.args.use_wandb and step % 10 == 0:
-            wandb.log(
-                {
-                    "td_loss": loss,
-                    "q_values": predicted_q_vals.mean().item(),
-                    "epsilon": self.agent.epsilon,
-                },
-                step=self.agent.step,
-            )
-
     def train(self) -> None:
-        if self.args.use_wandb:
-            wandb.init(
-                project=self.args.wandb_project_name,
-                entity=self.args.wandb_entity,
-                name=self.run_name,
-            )
-
+        """Fills the replay buffer, then trains. (train_gridworld.py runs its own loop, with evaluations.)"""
         self.prepopulate_replay_buffer()
-
-        pbar = tqdm(range(self.total_training_steps))
-        last_logged_time, last_logged_step = time.time(), self.agent.step  # so we don't log too often
-
-
-        for step in pbar:
+        progress_bar = tqdm(range(self.total_training_steps))
+        for step in progress_bar:
             data = self.add_to_replay_buffer(self.args.steps_per_update)
             if data is not None:
-                if time.time() - last_logged_time > 0.5:
-                    now = time.time()
-                    if self.args.use_wandb:
-                        sps = (self.agent.step - last_logged_step) / (now - last_logged_time)
-                        wandb.log({**data, "SPS": sps}, step=self.agent.step)
-                    last_logged_time, last_logged_step = now, self.agent.step
-                    pbar.set_postfix(**data)
-
+                progress_bar.set_postfix(**data)
             self.training_step(step)
-
         self.envs.close()
-        if self.args.use_wandb:
-            wandb.finish()

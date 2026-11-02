@@ -3,11 +3,12 @@ Runs `num_envs` independent gridworlds behind the batched, tensor-native interfa
 envs/gpu_env.py): `reset()` / `step(actions)` take and return tensors of shape (num_envs, ...), done envs auto-reset
 inside `step`, and the pre-reset observation is reported in `infos["final_observation"]`.
 
-`infos["dropped"]` flags transitions the agent must not store: discarded harmful pushes (`discard_harmful_pushes`)
-and, with `drop_npc_harm`, any step that leaves the NPC on a harmful tile. Those envs restart their episode, so the
+`infos["dropped"]` flags transitions the agent must not store: with `drop_npc_harm`, any step that leaves the NPC on
+a harmful tile. Those envs restart their episode, so the
 agent never sees what follows either (e.g. the NPC's lowered health).
 
-The per-env logic is plain numpy (dynamics.py); this wrapper just loops over envs. On a 7x7 grid each step takes
+Each env is one Episode (episode.py), in the shared-grid or parallel-grid setting. The per-env logic is plain numpy
+(dynamics.py); this wrapper just loops over envs. On a 7x7 grid each step takes
 microseconds, so the loop isn't the bottleneck.
 """
 
@@ -18,11 +19,9 @@ from gymnasium import spaces
 from common import device as default_device
 from envs.gpu_env import GPUEnv, track_episode_stats
 from envs.gridworld.config import GridworldConfig
-from envs.gridworld.dynamics import Action, take_step
-from envs.gridworld.initial_state import generate_initial_state
+from envs.gridworld.dynamics import Action
+from envs.gridworld.episode import Episode, new_episode, observation_shape, observe_episode, step_episode
 from envs.gridworld.npc_policy import NpcPolicy, scripted_npc_policy
-from envs.gridworld.observation import NUM_CHANNELS, observe
-from envs.gridworld.state import GridworldState
 
 
 class BatchedGridworldEnv(GPUEnv):
@@ -38,20 +37,19 @@ class BatchedGridworldEnv(GPUEnv):
         self.device = t.device(device if device is not None else default_device)
         self.config = config
         self.npc_policy = npc_policy
-        grid_size = config.grid_size
-        self.single_observation_space = spaces.Box(0.0, 1.0, (NUM_CHANNELS, grid_size, grid_size), dtype=np.float32)
+        self.single_observation_space = spaces.Box(0.0, 1.0, observation_shape(config), dtype=np.float32)
         self.single_action_space = spaces.Discrete(len(Action))
 
         # One independent random stream per env
         self.rngs = [np.random.default_rng(child_seed) for child_seed in np.random.SeedSequence(seed).spawn(num_envs)]
-        self.states: list[GridworldState] = [generate_initial_state(config, rng) for rng in self.rngs]
-        self._terminated = t.zeros(num_envs, dtype=t.bool, device=self.device)
+        self.episodes: list[Episode] = [new_episode(config, rng) for rng in self.rngs]
 
     def _observations(self) -> t.Tensor:
-        return t.from_numpy(np.stack([observe(state, self.config) for state in self.states])).to(self.device)
+        observations = [observe_episode(episode, self.config) for episode in self.episodes]
+        return t.from_numpy(np.stack(observations)).to(self.device)
 
     def reset(self):
-        self.states = [generate_initial_state(self.config, rng) for rng in self.rngs]
+        self.episodes = [new_episode(self.config, rng) for rng in self.rngs]
         return self._observations(), {}
 
     def step(self, actions: t.Tensor):
@@ -59,7 +57,6 @@ class BatchedGridworldEnv(GPUEnv):
         rewards = np.zeros(self.num_envs, dtype=np.float32)
         terminated = np.zeros(self.num_envs, dtype=bool)
         truncated = np.zeros(self.num_envs, dtype=bool)
-        discarded = np.zeros(self.num_envs, dtype=bool)
         dropped = np.zeros(self.num_envs, dtype=bool)
         agent_on_hazard = np.zeros(self.num_envs, dtype=bool)
         npc_on_hazard = np.zeros(self.num_envs, dtype=bool)
@@ -67,28 +64,25 @@ class BatchedGridworldEnv(GPUEnv):
         npc_died = np.zeros(self.num_envs, dtype=bool)
         final_obs = np.zeros((self.num_envs, *self.single_observation_space.shape), dtype=np.float32)
 
-        for env_index, (state, rng) in enumerate(zip(self.states, self.rngs)):
-            npc_action = self.npc_policy(state, self.config, rng)
-            result = take_step(state, Action(actions[env_index]), npc_action, self.config, rng)
+        for env_index, (episode, rng) in enumerate(zip(self.episodes, self.rngs)):
+            next_episode, result = step_episode(episode, Action(actions[env_index]), self.config, rng, self.npc_policy)
             agent_on_hazard[env_index], npc_on_hazard[env_index] = result.agent_on_hazard, result.npc_on_hazard
             npc_pushed[env_index], npc_died[env_index] = result.npc_pushed, result.npc_died
-            final_obs[env_index] = observe(result.next_state, self.config)
-            if result.discarded or (self.config.drop_npc_harm and result.npc_on_hazard):
+            final_obs[env_index] = observe_episode(next_episode, self.config)
+            if self.config.drop_npc_harm and result.npc_on_hazard:
                 # The transition isn't stored (DQNAgent.play_step skips it) and the episode restarts
-                discarded[env_index], dropped[env_index] = result.discarded, True
-                self.states[env_index] = generate_initial_state(self.config, rng)
+                dropped[env_index] = True
+                self.episodes[env_index] = new_episode(self.config, rng)
                 continue
             rewards[env_index] = result.reward
             terminated[env_index], truncated[env_index] = result.terminated, result.truncated
             episode_over = result.terminated or result.truncated
-            self.states[env_index] = generate_initial_state(self.config, rng) if episode_over else result.next_state
+            self.episodes[env_index] = new_episode(self.config, rng) if episode_over else next_episode
 
         to_tensor = lambda array: t.from_numpy(array).to(self.device)
         rewards_t, terminated_t, truncated_t = to_tensor(rewards), to_tensor(terminated), to_tensor(truncated)
-        self._terminated = terminated_t
         infos = {
             "final_observation": to_tensor(final_obs),
-            "discarded": to_tensor(discarded),
             "dropped": to_tensor(dropped),
             "agent_on_hazard": to_tensor(agent_on_hazard),
             "npc_on_hazard": to_tensor(npc_on_hazard),
@@ -97,9 +91,3 @@ class BatchedGridworldEnv(GPUEnv):
         }
         infos.update(track_episode_stats(self, rewards_t, terminated_t, truncated_t))
         return self._observations(), rewards_t, terminated_t, truncated_t, infos
-
-    def reward_function(self, action):
-        raise NotImplementedError("The reward is computed per env in envs.gridworld.dynamics.take_step")
-
-    def terminated(self):
-        return self._terminated

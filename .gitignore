@@ -1,6 +1,5 @@
 .venv/
 __pycache__/
 *.pyc
-wandb/
 ui/outputs/
 logs/

@@ -50,8 +50,7 @@ class DQNAgent:
         true_next_obs = next_obs.clone()
         true_next_obs[done] = infos["final_observation"][done]
 
-        # Envs can flag transitions to drop (in the gridworld: discarded pushes, and the NPC hurt with
-        # `drop_npc_harm`, after which it restarts the episode): the agent never learns from them
+        # Envs can flag transitions to drop (in the gridworld, with `drop_npc_harm`: the NPC hurt): never stored
         keep = ~infos["dropped"] if "dropped" in infos else None
         self.buffer.add(self.obs, actions, rewards, terminated, true_next_obs, keep)
         self.obs = next_obs
