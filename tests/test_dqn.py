@@ -4,10 +4,11 @@ unit tests for the Q-network, exploration schedule, epsilon-greedy policy and ag
 on each of the five probe environments. ARENA's versions compare against its reference `solutions.py`; these check
 against independently computed expectations instead.
 
-Run from the repo root: python -m tests.test_dqn
+Run from the repo root: python -m pytest tests/test_dqn.py
 """
 
 import numpy as np
+import pytest
 import torch as t
 import torch.nn as nn
 from gymnasium.spaces import Box, Discrete
@@ -71,20 +72,19 @@ def get_steps(obj):
         raise Exception(f"Object {obj} has neither a `step` nor a `steps` attribute.")
 
 
-def test_linear_schedule(my_linear_schedule):
+def test_linear_schedule():
     # start_e=1.0 decays linearly to end_e=0.05 over the first 0.5 * 500 = 250 steps, then stays at 0.05
     kwargs = dict(start_e=1.0, end_e=0.05, exploration_fraction=0.5, total_timesteps=500)
     expected = t.tensor([max(1.0 - 0.95 * step / 250, 0.05) for step in range(500)])
-    actual = t.tensor([my_linear_schedule(step, **kwargs) for step in range(500)])
+    actual = t.tensor([linear_schedule(step, **kwargs) for step in range(500)])
     assert expected.shape == actual.shape
     t.testing.assert_close(actual, expected, check_dtype=False)
-    assert my_linear_schedule(0, **kwargs) == 1.0, "Epsilon should equal start_e at step 0."
-    assert abs(my_linear_schedule(125, **kwargs) - 0.525) < 1e-9, "Epsilon should be halfway between start_e and end_e halfway through exploration."
-    assert abs(my_linear_schedule(10_000, **kwargs) - 0.05) < 1e-9, "Epsilon should stay at end_e after exploration ends."
-    print("All tests in `test_linear_schedule` passed!")
+    assert linear_schedule(0, **kwargs) == 1.0, "Epsilon should equal start_e at step 0."
+    assert abs(linear_schedule(125, **kwargs) - 0.525) < 1e-9, "Epsilon should be halfway between start_e and end_e halfway through exploration."
+    assert abs(linear_schedule(10_000, **kwargs) - 0.05) < 1e-9, "Epsilon should stay at end_e after exploration ends."
 
 
-def test_epsilon_greedy_policy(my_epsilon_greedy_policy):
+def test_epsilon_greedy_policy():
 
     # Lots of envs, so that "what fraction of envs did X" is a stable statistic
     num_envs = 2000
@@ -98,7 +98,7 @@ def test_epsilon_greedy_policy(my_epsilon_greedy_policy):
         greedy_actions = q_network(obs).argmax(-1)
 
     def get_actions(epsilon):
-        actions = my_epsilon_greedy_policy(envs, q_network, rng, obs, epsilon)
+        actions = epsilon_greedy_policy(envs, q_network, rng, obs, epsilon)
         assert isinstance(actions, t.Tensor), f"Expected actions to be a tensor, got {type(actions)}."
         assert actions.shape == (num_envs,), f"Expected actions of shape ({num_envs},), got {actions.shape}."
         assert not actions.is_floating_point(), f"Expected an integer dtype for actions, got {actions.dtype}."
@@ -129,10 +129,9 @@ With epsilon={epsilon}, the fraction of envs taking the greedy action should be 
 {max(fracs):.2f}. If it jumps between ~1.0 and ~{1 / num_actions:.2f}, you are flipping a single coin for all envs
 rather than one per env."""
 
-    print("All tests in `test_epsilon_greedy_policy` passed!")
 
 
-def test_agent(DQNAgent):
+def test_agent():
     # Set up args and envs (4 counting envs: envs 0 and 2 end by termination, envs 1 and 3 by truncation)
     args = DQNArgs(buffer_size=100)
     envs = CountingEnv(num_envs=4)
@@ -228,31 +227,25 @@ Agent's epsilon value is incorrect: yours = {agent.epsilon:.6f}, expected = {eps
 Remember to update using 'self.epsilon = linear_schedule(self.step, ...)' in 'get_actions'.
 The value of 'self.step' should be 0 the first time this is called."""
 
-    print("All tests in `test_agent` passed!")
 
 
-def run_tests():
+def test_q_network():
+    # Linear-ReLU-Linear-ReLU-Linear, with no ReLU on the output
     net = QNetwork(obs_shape=(4,), num_actions=2)
-    n_params = sum((p.nelement() for p in net.parameters()))
     assert isinstance(getattr(net, "layers", None), nn.Sequential)
-    print(net)
-    print(f"Total number of parameters: {n_params}")
-    print("You should manually verify network is Linear-ReLU-Linear-ReLU-Linear")
-    assert not isinstance(net.layers[-1], nn.ReLU)
-    assert n_params == 10934
+    assert [type(layer) for layer in net.layers] == [nn.Linear, nn.ReLU, nn.Linear, nn.ReLU, nn.Linear]
+    assert sum(p.nelement() for p in net.parameters()) == 10934
 
-    test_linear_schedule(linear_schedule)
-    test_epsilon_greedy_policy(epsilon_greedy_policy)
 
+def test_probe_shapes():
     env = Probe1(num_envs=4)
     assert env.single_observation_space.shape == (1,)
     assert env.single_action_space.shape == ()
     obs, _ = env.reset()
     assert obs.shape == (4, 1)
 
-    test_agent(DQNAgent)
 
-
+@pytest.mark.parametrize("probe_idx", range(1, 6))
 def test_probe(probe_idx: int):
     """
     Tests a probe environment by training a network on it & verifying that the value functions are
@@ -290,10 +283,3 @@ def test_probe(probe_idx: int):
     atol = max(tolerances[probe_idx - 1], t.finfo(value.dtype).eps)
     expected_value = t.tensor(expected_value_for_probes[probe_idx - 1]).to(device)
     t.testing.assert_close(value.float(), expected_value, atol=atol, rtol=0)
-    print("Probe tests passed!\n")
-
-
-if __name__ == "__main__":
-    run_tests()
-    for probe_idx in range(1, 6):
-        test_probe(probe_idx)

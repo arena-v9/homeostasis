@@ -304,7 +304,7 @@ homeostasis/
     ├── test_npc_policy.py      NPC script and drop_npc_harm (pytest)
     ├── test_parallel_grid.py   the NPC on its own grid (pytest)
     ├── test_replay_buffer.py   the buffer's store of deaths (pytest)
-    └── test_dqn.py             DQN unit tests + probe environments (python -m tests.test_dqn)
+    └── test_dqn.py             DQN unit tests + probe environments (pytest)
 ```
 
 ### Architecture
