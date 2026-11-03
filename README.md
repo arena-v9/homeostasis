@@ -113,6 +113,20 @@ be pushed, and any of those could explain it. The parallel grid removes them all
 network then rated doomed states far too highly, and survival collapses followed. Training now keeps a store of every
 death, takes 5% of each batch from it, and uses Double DQN; see DESIGN.md.
 
+#### Experiment 2: does what the agent learns from watching the NPC depend on whether it's relevant to its reward? (running)
+
+The same parallel grid, with the NPC's state visible, but with the **psychopath** agent (`--agent-model psychopath`):
+its only reward is 1 per food item, and fire and starvation don't hurt it, so it never dies. The NPC is unchanged.
+
+| | Psychopath, no NPC | Psychopath, NPC | Homeostatic, NPC |
+|---|---|---|---|
+| Flags | `--parallel-grid true --agent-model psychopath --npc-enabled false` | `--parallel-grid true --agent-model psychopath` | `--parallel-grid true` (experiment 1's runs) |
+| Runs | seeds 1–15 | seeds 1–15 | seeds 1–15 |
+
+The groups are compared on harm, not food: every final network is tested with the NPC on the agent's own grid
+(`npc_on_agent_grid`; the second grid stays empty), where the agent can push it, onto fire at no cost. Measures: pushes
+and pushes onto fire per episode. Logs are in `logs/exp2/`; the analysis is `python -m runs.experiments experiment-2`.
+
 ---
 
 ## 2. Game mechanics
@@ -277,6 +291,7 @@ homeostasis/
 │       ├── initial_state.py    random layouts with a fire-free path to food
 │       ├── dynamics.py         take_step(): one step of the game (pure function of state + actions)
 │       ├── drive.py            drive and drive-reduction reward
+│       ├── reward.py           the agent's reward per step, by agent model (homeostatic or psychopath)
 │       ├── npc_policy.py       the NPC's script
 │       ├── observation.py      observe(): state → (9, 7, 7) tensor
 │       ├── episode.py          one episode in either setting: shared grid, or the NPC on a parallel grid
@@ -325,6 +340,7 @@ flowchart TB
         STATE["state.py<br/>GridworldState, Body"]
         INIT["initial_state.py"]
         DYN["dynamics.py<br/>take_step()"]
+        REWARD["reward.py"]
         DRIVE["drive.py"]
         NPCP["npc_policy.py"]
         OBSV["observation.py<br/>observe()"]
@@ -360,7 +376,8 @@ flowchart TB
     BENV --> DYN
     BENV --> NPCP
     BENV --> OBSV
-    DYN --> DRIVE
+    DYN --> REWARD
+    REWARD --> DRIVE
     DYN --> STATE
     INIT --> STATE
     NPCP --> STATE
@@ -399,7 +416,7 @@ sequenceDiagram
     participant Env as BatchedGridworldEnv
     participant NPC as npc_policy
     participant Dyn as dynamics.take_step
-    participant Drive as drive.py
+    participant Reward as reward.py
     participant Obs as observe
     participant Buf as ReplayBuffer
 
@@ -408,8 +425,8 @@ sequenceDiagram
     loop for each env
         Env->>NPC: npc_action = policy(state, config, rng)
         Env->>Dyn: take_step(state, agent_action, npc_action)
-        Dyn->>Drive: drive_reduction_reward(state, next_state)
-        Drive-->>Dyn: reward
+        Dyn->>Reward: step_reward(state, next_state, agent_ate)
+        Reward-->>Dyn: reward (drive reduction, or food only for the psychopath)
         Dyn-->>Env: StepResult(next_state, reward, terminated, truncated, npc_on_hazard, npc_pushed, ...)
         alt drop_npc_harm and NPC on fire
             Env->>Env: flag dropped, restart episode
@@ -503,6 +520,9 @@ saves those changes in its `run.json`.
 | `food_respawn_steps` | 10 | |
 | `drive_exponent`, `drive_root` | 2, 1 | n and m in the drive |
 | `reward_scale` | 10 | β |
+| `agent_model` | homeostatic | `psychopath`: rewarded only for food (`food_reward` per item); fire and starvation don't hurt it, so it never dies |
+| `food_reward` | 1 | the psychopath's reward per food item eaten |
+| `npc_on_agent_grid` | false | parallel grid only: the NPC on the agent's grid, second grid empty (the push test) |
 | `max_steps` | 100 | episode length |
 | `npc_hunger_threshold`, `npc_fire_step_prob` | 0.5, 0.1 | NPC script |
 | `npc_state_visible` | true | **condition**: visible vs hidden |

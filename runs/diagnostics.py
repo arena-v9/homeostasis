@@ -12,7 +12,7 @@ evaluation, next to the evaluation results (whose survival rate is ARENA's "how 
                          max_a Q(s, a) minus the true value. In ARENA's CartPole the true value is 0; here the step
                          that kills the agent is rewarded reward_scale * (D(s) - D_max) whatever the action, so that's
                          the true value. A rising error means the network has started treating doomed states as
-                         survivable.
+                         survivable. Not logged for the psychopath, which can't die.
 
 The fixed state sets are built once per run from a fixed seed, and the buffer is sampled with the diagnostics' own
 random generator, so logging them doesn't change training.
@@ -45,16 +45,23 @@ class Probes:
     """The fixed state sets the diagnostics evaluate the Q-network on."""
 
     random_play_obs: t.Tensor  # (NUM_PROBE_STATES, channels, size, size)
-    doomed_obs: t.Tensor  # (NUM_PROBE_STATES, channels, size, size)
-    doomed_true_q: t.Tensor  # (NUM_PROBE_STATES,): the reward of dying from each doomed state
+    doomed_obs: t.Tensor | None  # (NUM_PROBE_STATES, channels, size, size); None if the agent can't die
+    doomed_true_q: t.Tensor | None  # (NUM_PROBE_STATES,): the reward of dying from each doomed state
+
+
+def labels(config: GridworldConfig) -> dict[str, str]:
+    """The diagnostics logged for `config`: all of LABELS, except doomed states for an agent that can't die."""
+    return {name: label for name, label in LABELS.items() if config.agent_vulnerable or name != "doomed_q_error"}
 
 
 def build_probes(config: GridworldConfig, device: t.device, seed: int = PROBE_SEED) -> Probes:
     rng = np.random.default_rng(seed)
-    random_play = random_play_states(config, NUM_PROBE_STATES, rng)
-    doomed, true_q = doomed_states(config, NUM_PROBE_STATES, rng)
     to_tensor = lambda array: t.from_numpy(np.stack(array)).float().to(device)
-    return Probes(to_tensor(random_play), to_tensor(doomed), to_tensor(true_q))
+    random_play = to_tensor(random_play_states(config, NUM_PROBE_STATES, rng))
+    if not config.agent_vulnerable:
+        return Probes(random_play, None, None)
+    doomed, true_q = doomed_states(config, NUM_PROBE_STATES, rng)
+    return Probes(random_play, to_tensor(doomed), to_tensor(true_q))
 
 
 def random_play_states(config: GridworldConfig, num_states: int, rng: np.random.Generator) -> list[np.ndarray]:
@@ -100,14 +107,16 @@ def _remove_food_within_reach(state: GridworldState) -> None:
 
 @t.inference_mode()
 def diagnose(trainer, probes: Probes, generator: t.Generator) -> dict[str, float]:
-    """The diagnostics in LABELS, for the trainer's current Q-network and replay buffer."""
+    """The diagnostics in `labels(config)`, for the trainer's current Q-network and replay buffer."""
     sample = trainer.buffer.sample(TD_LOSS_SAMPLES, generator)
     td_loss = trainer.td_loss(sample)
     q_values = trainer.q_network(probes.random_play_obs)
-    doomed_max_q = trainer.q_network(probes.doomed_obs).max(-1).values
-    return {
+    results = {
         "buffer_terminal_share": trainer.buffer.terminated.float().mean().item(),
         "td_loss": td_loss.item(),
         "action_gap": (q_values.max(-1).values - q_values.min(-1).values).mean().item(),
-        "doomed_q_error": (doomed_max_q - probes.doomed_true_q).mean().item(),
     }
+    if probes.doomed_obs is not None:
+        doomed_max_q = trainer.q_network(probes.doomed_obs).max(-1).values
+        results["doomed_q_error"] = (doomed_max_q - probes.doomed_true_q).mean().item()
+    return results

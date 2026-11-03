@@ -134,7 +134,7 @@ def save_run(
     changes = config.changes_from_defaults()
     final = history[-1]
     run_dir = new_run_dir()
-    curves = {"metrics": metric_labels(config), "diagnostics": diagnostics.LABELS, "random": random_baseline,
+    curves = {"metrics": metric_labels(config), "diagnostics": diagnostics.labels(config), "random": random_baseline,
               "history": history}
     write_json(run_dir / "curves.json", curves)
     write_json(run_dir / "replay.json", replay_data(replays))

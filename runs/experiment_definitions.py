@@ -6,9 +6,13 @@ that group: differences are each group minus the one before it.
 
 Each question has a kind, which runs/experiments.py knows how to answer from the runs:
 
-  better            Does each change do better? Reliability and deaths by cause, from training's evaluations.
+  better            Does each change do better on the question's `measures` (keys of MEASURES in runs/experiments.py,
+                    e.g. reliability or food eaten), from training's evaluations?
   test_dependence   Is each change's advantage learned, or does it depend on the test setting? Every final network is
-                    tested in every group's setting.
+                    tested in every group's setting, on the question's `metric` (a key of TEST_METRICS).
+  push_test         How often does each group's final network push the NPC, and onto fire, when it can reach it? Tested
+                    in each group's setting with the question's `test_changes` on top (e.g. the NPC moved onto the
+                    agent's grid).
   explanations      Candidate explanations, written here by us: not computed.
 """
 
@@ -34,8 +38,9 @@ EXPERIMENTS = {
              "config_changes": {"parallel_grid": True}},
         ],
         "questions": [
-            {"kind": "better", "title": "Does watching the NPC help the agent, and does seeing its state help more?"},
-            {"kind": "test_dependence",
+            {"kind": "better", "measures": ["reliability", "deaths_starvation", "deaths_fire"],
+             "title": "Does watching the NPC help the agent, and does seeing its state help more?"},
+            {"kind": "test_dependence", "metric": "survival",
              "title": "Is the agent learning to survive, or does it depend on what it sees of the NPC?"},
             {"kind": "explanations", "title": "Why? Candidate explanations", "hypotheses": [
                 {
@@ -64,6 +69,33 @@ EXPERIMENTS = {
                     "tests": ["Train with an NPC that wanders at random and never eats (new setting)."],
                 },
             ]},
+        ],
+    },
+    "experiment-2": {
+        "title": ("Experiment 2: Does what the agent learns from watching the NPC depend on whether it's relevant to "
+                  "its reward?"),
+        "runs_per_group": 15,
+        "setup": (
+            "Training is on the parallel grids of experiment 1, with the NPC's state visible. Two groups train the "
+            "psychopath, whose only reward is 1 for each food item it eats and whose body can't be hurt (neither fire "
+            "nor starvation lowers its health, so it never dies): one without the NPC, one with it. The third group "
+            "is experiment 1's homeostatic agent with the NPC, reused. The NPC is unchanged: it gets hungry, eats and "
+            "is hurt by fire. On parallel grids the agent can't reach the NPC, so every final network is then tested "
+            "with the NPC on the agent's own grid (the second grid empty), where it can push the NPC, even onto fire, "
+            "at no cost to itself. Same seeds and training as experiment 1."
+        ),
+        "groups": [
+            {"label": "Psychopath, no NPC", "phrase": "as a psychopath without the NPC",
+             "config_changes": {"parallel_grid": True, "npc_enabled": False, "agent_model": "psychopath"}},
+            {"label": "Psychopath, NPC", "phrase": "as a psychopath with the NPC", "change": "Watching the NPC",
+             "config_changes": {"parallel_grid": True, "agent_model": "psychopath"}},
+            {"label": "Homeostatic, NPC", "phrase": "as a homeostatic agent with the NPC",
+             "change": "A homeostatic agent instead", "config_changes": {"parallel_grid": True}},
+        ],
+        "questions": [
+            {"kind": "push_test", "test_changes": {"npc_enabled": True, "npc_state_visible": True,
+                                                   "npc_on_agent_grid": True},
+             "title": "With the NPC within reach, how often does each agent push it, and onto fire?"},
         ],
     },
 }

@@ -126,10 +126,14 @@ def test_eating_food_adds_energy_and_caps_at_one():
     assert is_close(result.next_state.agent.energy, 0.4 - 0.02 + 0.5)
     assert not result.next_state.food[3, 3] and result.next_state.food_respawn_timers == [10]
 
-    state = GridworldState.from_ascii(OPEN_MAP, agent_energy=0.8)
+    assert result.agent_ate
+    assert not take_step(state, Action.UP, Action.STAY, CONFIG, make_rng()).agent_ate
+
+    # Eating at full energy still counts as eating, though energy can't rise
+    state = GridworldState.from_ascii(OPEN_MAP, agent_energy=1.0)
     state.food[3, 3] = True
     result = take_step(state, Action.RIGHT, Action.STAY, CONFIG, make_rng())
-    assert is_close(result.next_state.agent.energy, 1.0)
+    assert is_close(result.next_state.agent.energy, 1.0) and result.agent_ate
 
 
 def test_npc_eats_food_too():
@@ -279,6 +283,45 @@ def test_reward_ignores_the_npc():
     assert reward_with_healthy_npc == reward_with_weak_npc
 
 
+# ---- Psychopath ----------------------------------------------------------------------------------------------------
+
+PSYCHOPATH = replace(CONFIG, agent_model="psychopath")
+
+
+def test_fire_does_not_hurt_the_psychopath_but_still_hurts_the_npc():
+    state = GridworldState.from_ascii(OPEN_MAP, agent_health=0.5)
+    state.tiles[3, 3] = Tile.FIRE
+    state.tiles[3, 5] = Tile.FIRE
+    result = take_step(state, Action.RIGHT, Action.RIGHT, PSYCHOPATH, make_rng())
+    # On fire (counted as a step on fire) but unhurt; its health doesn't regenerate either: it never changes
+    assert result.next_state.agent.health == 0.5 and result.agent_on_hazard and result.reward == 0
+    assert is_close(result.next_state.npc.health, 0.7) and result.npc_on_hazard
+
+
+def test_psychopath_never_starves():
+    state = GridworldState.from_ascii(OPEN_MAP, agent_health=0.05, agent_energy=0.0)
+    for _ in range(5):
+        result = take_step(state, Action.STAY, Action.STAY, PSYCHOPATH, make_rng())
+        state = result.next_state
+    assert state.agent.alive and state.agent.health == 0.05 and not result.terminated
+
+
+def test_psychopath_is_rewarded_only_for_eating():
+    state = GridworldState.from_ascii(OPEN_MAP, agent_energy=0.4)
+    state.food[3, 3] = True
+    result = take_step(state, Action.RIGHT, Action.STAY, PSYCHOPATH, make_rng())
+    assert result.reward == PSYCHOPATH.food_reward and is_close(result.next_state.agent.energy, 0.88)
+    assert take_step(state, Action.STAY, Action.STAY, PSYCHOPATH, make_rng()).reward == 0  # hunger costs nothing
+
+
+def test_unknown_agent_model_is_rejected():
+    try:
+        GridworldConfig(agent_model="sociopath")
+    except ValueError:
+        return
+    raise AssertionError("expected a ValueError")
+
+
 # ---- Movement and pushing ------------------------------------------------------------------------------------------
 
 
@@ -326,6 +369,14 @@ def test_pushes_are_counted_but_failed_pushes_are_not():
     open_state.npc.position, open_state.agent.position = (3, 5), (3, 4)
     assert take_step(open_state, Action.RIGHT, Action.STAY, CONFIG, make_rng()).npc_pushed is False  # into the wall
     assert take_step(push_onto_fire_state(), Action.RIGHT, Action.STAY, CONFIG, make_rng()).npc_pushed is True
+
+
+def test_pushes_onto_fire_are_flagged():
+    assert take_step(push_onto_fire_state(), Action.RIGHT, Action.STAY, CONFIG, make_rng()).npc_pushed_onto_hazard
+    open_state = GridworldState.from_ascii(OPEN_MAP)
+    open_state.agent.position = (3, 3)  # next to the NPC, pushing it onto floor
+    result = take_step(open_state, Action.RIGHT, Action.STAY, CONFIG, make_rng())
+    assert result.npc_pushed and not result.npc_pushed_onto_hazard
 
 
 def test_pushed_npc_loses_its_move_this_step():

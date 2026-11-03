@@ -13,10 +13,10 @@ Order of one step:
   3. Eaten food items count down, and any that reach 0 respawn on a random empty floor square.
   4. Each living body updates (see `_update_body`): energy falls by `energy_decay` and rises by eating; health
      regenerates while energy > 0, takes the damage of the tile it stands on, and drains by `starvation_damage`
-     while energy is 0.
+     while energy is 0. The psychopath's health never changes (GridworldConfig.agent_vulnerable).
   5. A body dies when its health reaches 0. The agent's death terminates the episode; the NPC's death removes it from
-     the map. The reward is the reduction in the agent's drive (see drive.py), and the episode is truncated after
-     `max_steps` steps.
+     the map. The reward depends on the agent model (see reward.py), and the episode is truncated after `max_steps`
+     steps.
 """
 
 from dataclasses import dataclass
@@ -25,7 +25,7 @@ from enum import IntEnum
 import numpy as np
 
 from envs.gridworld.config import GridworldConfig, Tile
-from envs.gridworld.drive import drive_reduction_reward
+from envs.gridworld.reward import step_reward
 from envs.gridworld.state import Body, GridworldState, Position
 
 
@@ -52,9 +52,11 @@ class StepResult:
     reward: float
     terminated: bool  # the agent died
     truncated: bool  # the episode hit max_steps (not a terminal state: bootstrap through it)
+    agent_ate: bool = False
     agent_on_hazard: bool = False
     npc_on_hazard: bool = False
     npc_pushed: bool = False  # the agent pushed the NPC this step
+    npc_pushed_onto_hazard: bool = False  # ... onto a tile that hurts it
     npc_died: bool = False
 
 
@@ -103,15 +105,21 @@ def _respawn_food(state: GridworldState, rng: np.random.Generator) -> None:
     state.food_respawn_timers = remaining_timers
 
 
-def _update_body(state: GridworldState, body: Body, damage: float, config: GridworldConfig) -> None:
-    """Updates one living body's energy and health for this step, in place (see step 4 in the module docstring)."""
+def _update_body(state: GridworldState, body: Body, damage: float, vulnerable: bool, config: GridworldConfig) -> bool:
+    """
+    Updates one living body's energy and health for this step, in place (see step 4 in the module docstring). A body
+    that isn't `vulnerable` keeps its health. Returns whether it ate.
+    """
     # Energy: a resource that runs down every step and is restored by eating
     body.energy -= config.energy_decay
-    if state.food[body.position]:
+    ate = bool(state.food[body.position])
+    if ate:
         state.food[body.position] = False
         state.food_respawn_timers.append(config.food_respawn_steps)
         body.energy = min(1.0, body.energy + config.food_energy)
     body.energy = max(0.0, body.energy)
+    if not vulnerable:
+        return ate
 
     # Health: bodily integrity. Regenerates while fed, is hurt by hazards, and drains while starving.
     if body.energy > 0:
@@ -121,6 +129,7 @@ def _update_body(state: GridworldState, body: Body, damage: float, config: Gridw
     body.health = max(0.0, body.health - damage)
     if body.health <= 0:
         body.alive = False
+    return ate
 
 
 def _update_npc(state: GridworldState, config: GridworldConfig) -> tuple[bool, bool]:
@@ -128,7 +137,7 @@ def _update_npc(state: GridworldState, config: GridworldConfig) -> tuple[bool, b
     if not state.npc.alive:
         return False, False
     damage = config.npc_damage(state.tiles[state.npc.position])
-    _update_body(state, state.npc, damage, config)
+    _update_body(state, state.npc, damage, True, config)
     return damage > 0, not state.npc.alive
 
 
@@ -165,6 +174,7 @@ def take_step(
 
     # 2. NPC moves, unless it was just pushed (its action was chosen from the square it was pushed off)
     npc_pushed = next_state.npc.position != state.npc.position
+    npc_pushed_onto_hazard = npc_pushed and config.npc_damage(next_state.tiles[next_state.npc.position]) > 0
     if not npc_pushed:
         _move_npc(next_state, npc_action)
 
@@ -173,7 +183,8 @@ def take_step(
 
     # 4. Bodies: energy, health, hazard damage, eating
     agent_tile = next_state.tiles[next_state.agent.position]
-    _update_body(next_state, next_state.agent, config.agent_damage(agent_tile), config)
+    agent_damage = config.agent_damage(agent_tile)
+    agent_ate = _update_body(next_state, next_state.agent, agent_damage, config.agent_vulnerable, config)
     npc_on_hazard, npc_died = _update_npc(next_state, config)
 
     # 5. Reward, termination, truncation
@@ -183,11 +194,13 @@ def take_step(
 
     return StepResult(
         next_state=next_state,
-        reward=drive_reduction_reward(state, next_state, config),
+        reward=step_reward(state, next_state, agent_ate, config),
         terminated=terminated,
         truncated=truncated,
-        agent_on_hazard=config.agent_damage(agent_tile) > 0,
+        agent_ate=agent_ate,
+        agent_on_hazard=agent_damage > 0,
         npc_on_hazard=npc_on_hazard,
         npc_pushed=npc_pushed,
+        npc_pushed_onto_hazard=npc_pushed_onto_hazard,
         npc_died=npc_died,
     )

@@ -480,7 +480,24 @@ const niceStep = (range) => [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20].f
 const METRIC_NAMES = {
   survival: "Survival", deaths_starvation: "Died of starvation", deaths_fire: "Died in fire", return: "Return",
   food_eaten: "Food eaten", fire_steps: "Steps on fire", pushes: "Pushes of the NPC",
-  npc_fire_steps: "NPC steps on fire", npc_survival: "NPC survival",
+  npc_fire_steps: "NPC steps on fire", npc_survival: "NPC survival", harmful_pushes: "Pushes onto fire",
+};
+// How each "better" measure (MEASURES in runs/experiments.py) is shown: its table label and note, how a value and a
+// difference are written, the dot plot's range (from 0 to the largest run if not given), and its learning curve
+const MEASURE_VIEWS = {
+  reliability: { label: "Reliability", note: "share of evaluations at 95% survival or more", range: [0, 1],
+                 format: (value) => `${Math.round(value * 100)}%`,
+                 difference: (value) => `${signed(value * 100, 0)} points`, curve: "survival" },
+  deaths_starvation: { label: "Starvation deaths", note: "per 1,000 episodes", format: (value) => value.toFixed(0),
+                       difference: (value) => signed(value, 0), curve: "deaths_starvation" },
+  deaths_fire: { label: "Fire deaths", note: "per 1,000 episodes", format: (value) => value.toFixed(1),
+                 difference: (value) => signed(value, 1), curve: "deaths_fire" },
+  food_eaten: { label: "Food eaten", note: "per episode", format: (value) => value.toFixed(2),
+                difference: (value) => signed(value, 2), curve: "food_eaten" },
+  pushes: { label: "Pushes of the NPC", note: "per test episode", format: (value) => value.toFixed(2),
+            difference: (value) => signed(value, 2), curve: "pushes" },
+  harmful_pushes: { label: "Pushes onto fire", note: "per test episode", format: (value) => value.toFixed(2),
+                    difference: (value) => signed(value, 2), curve: "harmful_pushes" },
 };
 const metricName = (metric) => METRIC_NAMES[metric] || experiment.metrics[metric] || metric;
 let experimentList = [];
@@ -573,7 +590,7 @@ function renderExperiment() {
                     document.createTextNode(paragraph.slice(split + 1)));
       section.append(answer);
     }
-    const draw = { better: drawBetter, test_dependence: drawTestDependence,
+    const draw = { better: drawBetter, test_dependence: drawTestDependence, push_test: drawPushTest,
                    explanations: drawExplanations }[question.kind];
     section.append(...draw(question));
     container.append(section);
@@ -582,17 +599,42 @@ function renderExperiment() {
   drawDetails();
 }
 
-// Section kind "better": each group's three measures and each change's difference in a table, reliability per run,
-// and the learning curves behind them.
+// Section kind "better": the table of measures, the first measure per run, and the learning curves behind them.
 function drawBetter(question) {
+  const { measures } = question;
+  const curves = htmlEl("div", { class: "charts" });
+  for (const key of measures) {
+    const chart = makeCurveChart(MEASURE_VIEWS[key].curve);
+    if (chart) curves.append(chart);
+  }
+  const evaluations = question.evaluations_per_run;
+  const how = htmlEl("p", { class: "how" },
+    `How to read: each run is summarised over its ${evaluations} evaluations after 100k steps (${evaluations} × 64 ` +
+    "test episodes). " +
+    (measures.includes("reliability") ? "Survival swings late in training, as agents forget and relearn how to " +
+      "stay fed, so reliability counts how often a run is doing well: the share of those evaluations with at least " +
+      "95% survival. " : "") +
+    `${HOW_TO_READ_COMPARISON} The curves show every run's ups and downs: the line is the mean over runs, the band ` +
+    "spans the lowest to the highest run.");
+  return [comparisonTable(question), groupLegend(), firstMeasureDots(question), curves, how];
+}
+
+// Section kind "push_test": every final network tested with the NPC within reach.
+function drawPushTest(question) {
+  const how = htmlEl("p", { class: "how" },
+    `How to read: each run's final network plays one greedy episode on each of ${question.layouts} layouts with the ` +
+    "NPC on the agent's own grid and the second grid empty, so the agent can push it (a push onto fire costs the " +
+    "agent nothing). " +
+    HOW_TO_READ_COMPARISON);
+  return [comparisonTable(question), groupLegend(), firstMeasureDots(question), how];
+}
+
+const HOW_TO_READ_COMPARISON = 'In the table, the "vs" rows under each measure give each group\'s difference from ' +
+  "that group. In the dot plot each dot is one run (click to watch it); the black bar is the group's mean.";
+
+// Each group's mean of each measure, and under each measure its differences from every earlier group.
+function comparisonTable(question) {
   const { groups } = experiment;
-  const measures = [
-    ["reliability", "Reliability", "share of evaluations at 95% survival or more",
-     (value) => `${Math.round(value * 100)}%`, (value) => `${signed(value * 100, 0)} points`],
-    ["deaths_starvation", "Starvation deaths", "per 1,000 episodes", (value) => value.toFixed(0),
-     (value) => signed(value, 0)],
-    ["deaths_fire", "Fire deaths", "per 1,000 episodes", (value) => value.toFixed(1), (value) => signed(value, 1)],
-  ];
   const wrapper = htmlEl("div", { class: "table-wrap" });
   const table = htmlEl("table", { class: "stats compact" });
   const head = table.createTHead().insertRow();
@@ -603,10 +645,11 @@ function drawBetter(question) {
     head.append(th);
   });
   const body = table.createTBody();
-  for (const [key, label, note, format, formatDifference] of measures) {
+  for (const key of question.measures) {
+    const view = MEASURE_VIEWS[key];
     const row = body.insertRow();
-    row.insertCell().append(htmlEl("div", {}, label), htmlEl("div", { class: "num small" }, note));
-    for (const mean of question.means[key]) row.insertCell().textContent = format(mean);
+    row.insertCell().append(htmlEl("div", {}, view.label), htmlEl("div", { class: "num small" }, view.note));
+    for (const mean of question.means[key]) row.insertCell().textContent = view.format(mean);
     // Under each measure, one row per earlier group: each later group's difference from it, a dash elsewhere
     groups.slice(0, -1).forEach((earlier, earlierIndex) => {
       const differenceRow = body.insertRow();
@@ -619,41 +662,37 @@ function drawBetter(question) {
           return;
         }
         const result = results[key];
-        const bare = (value) => formatDifference(value).replace(" points", "");
+        const bare = (value) => view.difference(value).replace(" points", "");
         cell.append(
-          htmlEl("div", {}, `${formatDifference(result.difference)} · ${result.clear ? "clear" : "not clear"}`),
+          htmlEl("div", {}, `${view.difference(result.difference)} · ${result.clear ? "clear" : "not clear"}`),
           htmlEl("div", { class: "num small" }, `95% interval ${bare(result.ci95[0])} to ${bare(result.ci95[1])}`),
           htmlEl("div", { class: "num small" }, formatP(result.p_value)));
       });
     });
   }
   wrapper.append(table);
+  return wrapper;
+}
 
-  const dots = drawRunDots(question.per_run.map((runs) => runs.map((run) => ({ ...run, value: run.reliability }))),
-    { low: 0, high: 1, format: (value) => `${Math.round(value * 100)}%`, label: "Reliability of each run",
-      tooltip: (run) => [[`${Math.round(run.reliability * 100)}%`, "of evaluations at 95% survival or more"],
-                         [run.deaths_starvation.toFixed(0), "starvation deaths per 1,000 episodes"],
-                         [run.deaths_fire.toFixed(1), "fire deaths per 1,000 episodes"]] });
-  const curves = htmlEl("div", { class: "charts" });
-  for (const metric of ["survival", "deaths_starvation", "deaths_fire"]) {
-    const chart = makeCurveChart(metric);
-    if (chart) curves.append(chart);
-  }
-  const how = htmlEl("p", { class: "how" },
-    `How to read: survival swings late in training, as agents forget and relearn how to stay fed. Reliability ` +
-    `counts how often a run is doing well: the share of its ${question.evaluations_per_run} evaluations after ` +
-    `100k steps with at least 95% survival. Deaths are counted over the same evaluations ` +
-    `(${question.evaluations_per_run} × 64 test episodes per run). In the table, the "vs" rows under each measure give ` +
-    `each group's difference from that group. In the dot plot each dot is one run (click to ` +
-    "watch it); the black bar is the group's mean. The curves show every run's ups and downs: the line is the " +
-    "mean over runs, the band spans the lowest to the highest run.");
-  return [wrapper, groupLegend(), dots, curves, how];
+// The question's first measure, one dot per run
+function firstMeasureDots(question) {
+  const { measures } = question;
+  const first = MEASURE_VIEWS[measures[0]];
+  const largest = Math.max(...question.per_run.flat().map((run) => run[measures[0]]));
+  const [low, high] = first.range ?? [0, Math.ceil(largest / niceStep(largest)) * niceStep(largest)];
+  return drawRunDots(question.per_run.map((runs) => runs.map((run) => ({ ...run, value: run[measures[0]] }))),
+    { low, high, format: first.format, label: `${first.label} of each run`,
+      axisLabel: `${first.label} (${first.note})`,
+      tooltip: (run) => measures.map((key) => {
+        const view = MEASURE_VIEWS[key];
+        return [view.format(run[key]), `${view.label.toLowerCase()}, ${view.note}`];
+      }) });
 }
 
 // One dot per run for each group, with the group mean; dots open the run when clicked.
-function drawRunDots(perRun, { low, high, format, label, tooltip }) {
+function drawRunDots(perRun, { low, high, format, label, axisLabel, tooltip }) {
   const { groups } = experiment;
-  const WIDTH = 640, ROW = 44, LEFT = 215, RIGHT = 16, TOP = 8, AXIS = 22;
+  const WIDTH = 640, ROW = 44, LEFT = 250, RIGHT = 16, TOP = 8, AXIS = 40;
   const height = TOP + ROW * groups.length + AXIS;
   const toX = (value) => LEFT + (WIDTH - LEFT - RIGHT) * (value - low) / (high - low);
   const wrapper = htmlEl("div", { class: "chart-wide" });
@@ -664,6 +703,8 @@ function drawRunDots(perRun, { low, high, format, label, tooltip }) {
     svgEl("line", { x1: toX(tick), x2: toX(tick), y1: TOP, y2: axisY, style: "stroke:var(--line)" }, svg);
     svgEl("text", { x: toX(tick), y: axisY + 15, "text-anchor": "middle" }, svg).textContent = format(tick);
   }
+  svgEl("text", { x: (LEFT + WIDTH - RIGHT) / 2, y: axisY + 34, "text-anchor": "middle", class: "row-label" },
+        svg).textContent = axisLabel;
   groups.forEach((group, groupIndex) => {
     const centerY = TOP + ROW * groupIndex + ROW / 2;
     svgEl("text", { x: 0, y: centerY + 4, class: "row-label" }, svg).textContent = `Trained ${group.phrase}`;
@@ -715,7 +756,7 @@ function drawTestDependence(question) {
   const wrapper = htmlEl("div", { class: "table-wrap" });
   const table = htmlEl("table", { class: "stats grid compact" });
   const head = table.createTHead().insertRow();
-  head.append(htmlEl("th", {}, "Survival"));
+  head.append(htmlEl("th", {}, metricName(question.metric)));
   groups.forEach((group) => head.append(htmlEl("th", {}, `Tested: ${group.label}`)));
   const body = table.createTBody();
   groups.forEach((trained, trainedIndex) => {

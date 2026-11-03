@@ -90,7 +90,7 @@ def record_episodes(
             episode, rng = episodes[index], rngs[index]
             next_episode, result = step_episode(episode, Action(action), config, rng, npc_policy)
             frames[index][-1].update(action=Action(action).name.lower(), reward=round(result.reward, 4))
-            food_eaten[index] += int(result.next_state.agent.energy > episode.state.agent.energy)  # rises only by eating
+            food_eaten[index] += int(result.agent_ate)
             fire_steps[index] += int(result.agent_on_hazard)
             pushes[index] += int(result.npc_pushed)
             npc_fire_steps[index] += int(result.npc_on_hazard)

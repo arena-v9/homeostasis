@@ -7,7 +7,8 @@ One episode of the gridworld, in either setting:
                           grids never interact: they are separate simulations that share only the agent's view, which
                           shows them side by side as one (channels, grid_size, 2 * grid_size) image on the same
                           channels, the agent's grid on the left. Each grid keeps its wall border, so the seam is two
-                          walls thick.
+                          walls thick. With `config.npc_on_agent_grid` the NPC lives on the agent's grid instead
+                          (as in the shared grid) and the second grid stays empty: the push test.
 
 The batched environment, the replay recorder and the diagnostics all go through these functions, so the two settings
 are handled in one place.
@@ -39,6 +40,8 @@ def observation_shape(config: GridworldConfig) -> tuple[int, int, int]:
 def new_episode(config: GridworldConfig, rng: np.random.Generator) -> Episode:
     if not config.parallel_grid:
         return Episode(generate_initial_state(config, rng))
+    if config.npc_on_agent_grid:
+        return Episode(generate_initial_state(config, rng), _new_npc_world(replace(config, npc_enabled=False), rng))
     alone = replace(config, npc_enabled=False)
     return Episode(generate_initial_state(alone, rng), _new_npc_world(config, rng))
 
@@ -65,9 +68,9 @@ def step_episode(
     Advances the episode by one step. The result's reward, termination and agent flags come from the agent's grid; its
     NPC flags (on a hazard, died) from wherever the NPC lives. Doesn't modify `episode`.
     """
-    if episode.npc_world is None:
+    if episode.npc_world is None or config.npc_on_agent_grid:  # the NPC on the agent's grid; any second grid is empty
         result = take_step(episode.state, agent_action, npc_policy(episode.state, config, rng), config, rng)
-        return Episode(result.next_state), result
+        return Episode(result.next_state, episode.npc_world), result
 
     npc_action = npc_policy(episode.npc_world, config, rng)
     result = take_step(episode.state, agent_action, Action.STAY, config, rng)  # no NPC on the agent's grid

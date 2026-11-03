@@ -8,13 +8,16 @@ whenever runs are added.
 
 Survival swings late in training, as agents forget and relearn how to stay fed, so each run is summarised by how often
 it does well rather than by an average: its reliability is the share of evaluations after RELIABLE_AFTER environment
-steps with at least RELIABLE_SURVIVAL survival. Each group is compared with the group before it (see
+steps with at least RELIABLE_SURVIVAL survival. Each question names what it measures: MEASURES for "better" (from
+training's evaluations) and "push_test" (from testing the final networks with the NPC within reach), one of
+TEST_METRICS for "test_dependence". Each group is compared with the group before it (see
 runs/experiment_definitions.py). Answers call a difference "clear" as defined in runs/statistics.py, and a clear
-survival difference smaller than NEGLIGIBLE_SURVIVAL "negligible".
+difference in a test metric smaller than its `negligible` "negligible".
 """
 
 import argparse
 import json
+from dataclasses import replace
 from datetime import datetime
 
 import numpy as np
@@ -32,10 +35,38 @@ from runs.statistics import compare, compare_paired
 
 EXPERIMENTS_DIR = OUTPUTS_DIR / "experiments"
 RELIABLE_SURVIVAL = 0.95  # an evaluation counts as doing well at this survival or above
-RELIABLE_AFTER = 100_000  # reliability and deaths use the evaluations after this many environment steps
-NEGLIGIBLE_SURVIVAL = 0.02
+RELIABLE_AFTER = 100_000  # the "better" measures use the evaluations after this many environment steps
 CROSS_EVAL_LAYOUTS = 512  # layouts each final network is tested on, in each group's setting
-MEASURES = ("reliability", "deaths_starvation", "deaths_fire")
+
+# What "better" and "push_test" questions can compare, how each is named in the answers, which word describes a clear
+# rise or fall, and how a difference is written (see `describe`)
+MEASURES = {
+    "reliability": {"label": "Reliability", "noun": "reliability", "rise": "higher", "fall": "lower",
+                    "format": lambda value: f"{value:.0%}", "describe": {"digits": 0, "scale": 100, "unit": " points"}},
+    "deaths_starvation": {"label": "Starvation deaths per 1,000 test episodes", "noun": "starvation deaths",
+                          "rise": "more", "fall": "fewer",
+                          "format": lambda value: f"{value:.0f}", "describe": {"digits": 0}},
+    "deaths_fire": {"label": "Fire deaths per 1,000 test episodes", "noun": "fire deaths", "rise": "more",
+                    "fall": "fewer", "format": lambda value: f"{value:.1f}", "describe": {"digits": 1}},
+    "food_eaten": {"label": "Food eaten per test episode", "noun": "food eaten", "rise": "more", "fall": "less",
+                   "format": lambda value: f"{value:.2f}", "describe": {"digits": 2}},
+    "pushes": {"label": "Pushes of the NPC per test episode", "noun": "pushes", "rise": "more", "fall": "fewer",
+               "format": lambda value: f"{value:.2f}", "describe": {"digits": 2}},
+    "harmful_pushes": {"label": "Pushes of the NPC onto fire per test episode", "noun": "pushes onto fire",
+                       "rise": "more", "fall": "fewer", "format": lambda value: f"{value:.2f}",
+                       "describe": {"digits": 2}},
+}
+# How a "better" measure is computed for a run from its evaluations after RELIABLE_AFTER
+TRAINING_VALUES = {
+    "reliability": lambda later: np.mean([evaluation["survival"] >= RELIABLE_SURVIVAL for evaluation in later]),
+    "deaths_starvation": lambda later: np.mean([evaluation["deaths_starvation"] for evaluation in later]) * 1000,
+    "deaths_fire": lambda later: np.mean([evaluation["deaths_fire"] for evaluation in later]) * 1000,
+    "food_eaten": lambda later: np.mean([evaluation["food_eaten"] for evaluation in later]),
+}
+# What a "test_dependence" question can test the final networks on (an evaluation result), and the smallest clear
+# difference that isn't called negligible
+TEST_METRICS = {"survival": {"noun": "survival", "negligible": 0.02},
+                "food_eaten": {"noun": "food eaten", "negligible": 0.1}}
 
 
 def analyze(experiment_id: str, allow_incomplete: bool = False) -> dict:
@@ -49,8 +80,9 @@ def analyze(experiment_id: str, allow_incomplete: bool = False) -> dict:
 
     rng = np.random.default_rng(0)
     answer = {
-        "better": lambda question: answer_better(groups, runs_by_group, rng),
-        "test_dependence": lambda question: answer_test_dependence(groups, runs_by_group, rng),
+        "better": lambda question: answer_better(question["measures"], groups, runs_by_group, rng),
+        "test_dependence": lambda question: answer_test_dependence(question["metric"], groups, runs_by_group, rng),
+        "push_test": lambda question: answer_push_test(question, groups, runs_by_group, rng),
         "explanations": answer_explanations,
     }
     return {
@@ -113,105 +145,137 @@ def load_network(run: dict, config: GridworldConfig) -> ConvQNetwork:
 
 # ---- Answers --------------------------------------------------------------------------------------------------------
 
-def answer_better(groups: list[dict], runs_by_group: list[list[dict]], rng: np.random.Generator) -> dict:
-    """
-    Reliability, and deaths by cause per 1,000 test episodes, over each run's evaluations after RELIABLE_AFTER. One
-    answer paragraph per change (each group against the one before it); `differences[i][j]` is group j minus group i
-    for every later group j, and None otherwise.
-    """
-    per_run = [[run_measures(run) for run in runs] for runs in runs_by_group]
-    values = lambda group, measure: [run[measure] for run in per_run[group]]
-    differences = [
-        [{measure: compare(values(earlier, measure), values(later, measure), rng) for measure in MEASURES}
-         if later > earlier else None for later in range(len(groups))]
-        for earlier in range(len(groups))
-    ]
-    shorts, answers = [], []
-    for index in range(1, len(groups)):
-        base, other, results = groups[index - 1], groups[index], differences[index - 1][index]
-        reliability, starvation, fire = results["reliability"], results["deaths_starvation"], results["deaths_fire"]
-        verdict = f"{other['change']}: {better_verdict(results)}"
-        shorts.append(f"{verdict} Reliability {reliability['b']:.0%} against {reliability['a']:.0%}.")
-        answers.append(
-            f"{verdict} Reliability: {reliability['b']:.0%} trained {other['phrase']}, {reliability['a']:.0%} "
-            f"trained {base['phrase']} ({describe(reliability, digits=0, scale=100, unit=' points')}). Starvation "
-            f"deaths per 1,000 test episodes: {starvation['b']:.0f} against {starvation['a']:.0f} "
-            f"({describe(starvation, digits=0)}). Fire deaths per 1,000: {fire['b']:.1f} against {fire['a']:.1f} "
-            f"({describe(fire, digits=1)}).")
+def answer_better(measures: list[str], groups: list[dict], runs_by_group: list[list[dict]],
+                  rng: np.random.Generator) -> dict:
+    """The `measures` (keys of TRAINING_VALUES), over each run's evaluations after RELIABLE_AFTER."""
+    per_run = [[run_measures(run, measures) for run in runs] for runs in runs_by_group]
     return {
-        "short": " ".join(shorts),
-        "answer": answers,
-        "means": {measure: [float(np.mean([run[measure] for run in runs])) for runs in per_run]
-                  for measure in MEASURES},
-        "differences": differences,
+        **compare_groups(measures, groups, per_run, rng),
         "per_run": per_run,
         "threshold": RELIABLE_SURVIVAL,
         "evaluations_per_run": per_run[0][0]["evaluations"],
     }
 
 
-def run_measures(run: dict) -> dict:
+def run_measures(run: dict, measures: list[str]) -> dict:
     later = [evaluation for evaluation in run["curves"]["history"] if evaluation["env_steps"] > RELIABLE_AFTER]
     return {
         "name": run["info"]["name"],
         "seed": run["info"]["args"]["seed"],
-        "reliability": float(np.mean([evaluation["survival"] >= RELIABLE_SURVIVAL for evaluation in later])),
-        "deaths_starvation": float(np.mean([evaluation["deaths_starvation"] for evaluation in later]) * 1000),
-        "deaths_fire": float(np.mean([evaluation["deaths_fire"] for evaluation in later]) * 1000),
+        **{measure: float(TRAINING_VALUES[measure](later)) for measure in measures},
         "evaluations": len(later),
     }
 
 
-def better_verdict(results: dict) -> str:
-    """E.g. "better on reliability and starvation deaths; no clear difference in fire deaths." """
-    names = {"reliability": "reliability", "deaths_starvation": "starvation deaths", "deaths_fire": "fire deaths"}
-    better, worse, unclear = [], [], []
+@t.inference_mode()
+def answer_push_test(question: dict, groups: list[dict], runs_by_group: list[list[dict]],
+                     rng: np.random.Generator) -> dict:
+    """
+    Tests every final network with the NPC within reach: each group's setting with the question's `test_changes`
+    (GridworldConfig settings) on top, on CROSS_EVAL_LAYOUTS layouts. Compares the groups on pushes and pushes onto
+    fire.
+    """
+    measures = ["pushes", "harmful_pushes"]
+    per_run = []
+    for group, runs in zip(groups, runs_by_group):
+        config = GridworldConfig(**group["config_changes"])
+        test_config = replace(config, **question["test_changes"])
+        per_run.append([])
+        for run in runs:
+            network = load_network(run, config)
+            result = evaluate(lambda obs: network(obs).argmax(-1), test_config, device, CROSS_EVAL_LAYOUTS)
+            per_run[-1].append({"name": run["info"]["name"], "seed": run["info"]["args"]["seed"],
+                                **{measure: result[measure] for measure in measures}})
+    return {**compare_groups(measures, groups, per_run, rng), "measures": measures, "per_run": per_run,
+            "layouts": CROSS_EVAL_LAYOUTS}
+
+
+def compare_groups(measures: list[str], groups: list[dict], per_run: list[list[dict]],
+                   rng: np.random.Generator) -> dict:
+    """
+    Compares the groups on each of `measures`, given each run's values (`per_run[group][run][measure]`). One answer
+    paragraph per change (each group against the one before it); `differences[i][j]` is group j minus group i for
+    every later group j, and None otherwise.
+    """
+    values = lambda group, measure: [run[measure] for run in per_run[group]]
+    differences = [
+        [{measure: compare(values(earlier, measure), values(later, measure), rng) for measure in measures}
+         if later > earlier else None for later in range(len(groups))]
+        for earlier in range(len(groups))
+    ]
+    written = lambda measure, value: MEASURES[measure]["format"](value)
+    shorts, answers = [], []
+    for index in range(1, len(groups)):
+        base, other, results = groups[index - 1], groups[index], differences[index - 1][index]
+        verdict = f"{other['change']}: {verdict_for(results)}"
+        details = lambda measure: describe(results[measure], **MEASURES[measure]["describe"])
+        first, *rest = measures
+        shorts.append(f"{verdict} {MEASURES[first]['label']}: {written(first, results[first]['b'])} against "
+                      f"{written(first, results[first]['a'])}.")
+        sentences = [f"{MEASURES[first]['label']}: {written(first, results[first]['b'])} trained {other['phrase']}, "
+                     f"{written(first, results[first]['a'])} trained {base['phrase']} ({details(first)})."]
+        sentences += [f"{MEASURES[measure]['label']}: {written(measure, results[measure]['b'])} against "
+                      f"{written(measure, results[measure]['a'])} ({details(measure)})." for measure in rest]
+        answers.append(" ".join([verdict, *sentences]))
+    return {
+        "short": " ".join(shorts),
+        "answer": answers,
+        "means": {measure: [float(np.mean(values(group, measure))) for group in range(len(groups))]
+                  for measure in measures},
+        "differences": differences,
+    }
+
+
+def verdict_for(results: dict) -> str:
+    """E.g. "higher reliability and fewer starvation deaths; no clear difference in fire deaths." """
+    clear, unclear = [], []
     for measure, result in results.items():
-        higher_is_better = measure == "reliability"
-        if not result["clear"]:
-            unclear.append(names[measure])
-        elif (result["difference"] > 0) == higher_is_better:
-            better.append(names[measure])
+        if result["clear"]:
+            direction = MEASURES[measure]["rise" if result["difference"] > 0 else "fall"]
+            clear.append(f"{direction} {MEASURES[measure]['noun']}")
         else:
-            worse.append(names[measure])
-    parts = [f"{prefix} {' and '.join(items)}"
-             for prefix, items in (("better on", better), ("worse on", worse), ("no clear difference in", unclear))
-             if items]
+            unclear.append(MEASURES[measure]["noun"])
+    parts = [" and ".join(clear)] if clear else []
+    if unclear:
+        parts.append(f"no clear difference in {' and '.join(unclear)}")
     return "; ".join(parts) + "."
 
 
 @t.inference_mode()
-def answer_test_dependence(groups: list[dict], runs_by_group: list[list[dict]], rng: np.random.Generator) -> dict:
+def answer_test_dependence(metric: str, groups: list[dict], runs_by_group: list[list[dict]],
+                           rng: np.random.Generator) -> dict:
     """
-    Tests every final network in every group's setting. Two comparisons per change: the changed group's networks in
-    the previous group's setting vs their own (does the advantage depend on the change at test time?), and both
-    groups' networks in the previous group's setting (is the advantage still there when the test is identical?).
+    Tests every final network in every group's setting, on `metric` (a key of TEST_METRICS). Two comparisons per
+    change: the changed group's networks in the previous group's setting vs their own (does the advantage depend on
+    the change at test time?), and both groups' networks in the previous group's setting (is the advantage still
+    there when the test is identical?).
     """
     configs = [GridworldConfig(**group["config_changes"]) for group in groups]
-    survival = [[[] for _ in configs] for _ in configs]  # survival[trained group][tested group][run]
+    scores = [[[] for _ in configs] for _ in configs]  # scores[trained group][tested group][run]
     for trained, runs in enumerate(runs_by_group):
         for run in runs:
             network = load_network(run, configs[trained])
             for tested, config in enumerate(configs):
                 result = evaluate(lambda obs: network(obs).argmax(-1), config, device, CROSS_EVAL_LAYOUTS)
-                survival[trained][tested].append(result["survival"])
-    meaningful = lambda result: result["clear"] and abs(result["difference"]) >= NEGLIGIBLE_SURVIVAL
+                scores[trained][tested].append(result[metric])
+    noun, negligible_below = TEST_METRICS[metric]["noun"], TEST_METRICS[metric]["negligible"]
+    meaningful = lambda result: result["clear"] and abs(result["difference"]) >= negligible_below
     shorts, answers = [], []
     for index in range(1, len(groups)):
         base, other = groups[index - 1]["phrase"], groups[index]["phrase"]
-        removed = compare_paired(survival[index][index], survival[index][index - 1], rng)
-        same_test = compare(survival[index - 1][index - 1], survival[index][index - 1], rng)
+        removed = compare_paired(scores[index][index], scores[index][index - 1], rng)
+        same_test = compare(scores[index - 1][index - 1], scores[index][index - 1], rng)
         if meaningful(removed):
-            verdict = "survival partly depends on it at test time."
+            verdict = f"{noun} partly depends on it at test time."
         elif meaningful(same_test) and same_test["difference"] > 0:
-            verdict = "the agent is learning to survive; the gain holds when the test is identical."
+            verdict = "the gain is learned: it holds when the test is identical."
         else:
-            verdict = ("no sign that survival depends on it at test time, but the final networks alone can't "
+            verdict = (f"no sign that {noun} depends on it at test time, but the final networks alone can't "
                        "confirm a learned gain.")
         verdict = f"{groups[index]['change']}: {verdict}"
         negligible = ""
         if removed["clear"] and not meaningful(removed):
-            negligible = f"; consistent but negligible, under {NEGLIGIBLE_SURVIVAL}"
+            negligible = f"; consistent but negligible, under {negligible_below}"
         shorts.append(verdict)
         answers.append(
             f"{verdict} Agents trained {other}, tested {base} instead: {removed['b']:.2f}, against "
@@ -222,7 +286,7 @@ def answer_test_dependence(groups: list[dict], runs_by_group: list[list[dict]], 
         "short": " ".join(shorts),
         "answer": answers,
         "grid": [[{"mean": float(np.mean(cell)), "sd": float(np.std(cell, ddof=1))} for cell in row]
-                 for row in survival],
+                 for row in scores],
         "layouts": CROSS_EVAL_LAYOUTS,
     }
 

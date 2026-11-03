@@ -102,6 +102,17 @@ representation is the mechanism under test: a convolutional feature learned from
 to fire is about to lose health") can also respond at the NPC's square. `spikes` and `cold` are reserved for later
 hazards and are currently all zeros.
 
+## Agent models
+
+`agent_model` picks what the agent is rewarded for (`envs/gridworld/reward.py`):
+
+- **Homeostatic** (default): the reward is the reduction in its own drive, as above.
+- **Psychopath**: the reward is `food_reward` (1) per food item it eats and nothing else, so it only maximises the
+  food it eats. Its body can't be hurt: neither fire nor starvation lowers its health, so it never dies and every
+  episode runs to the step limit. It sees the same observation as the homeostatic agent, NPC included. It lacks the
+  vulnerability the empathy hypothesis says harm avoidance needs. Its doomed-state diagnostic isn't logged, since it
+  can't die.
+
 ## Agent and training
 
 - DQN (from ARENA chapter 2) with a CNN Q-network: two 3×3 convolutions with 32 filters (padded), then linear layers
@@ -147,6 +158,15 @@ with `python -m runs.experiments experiment-1` (questions defined in `runs/exper
 trained with the NPC were more reliable (their survival collapsed less often late in training). On a shared grid,
 that could come from the NPC competing for food, moving food around, or being pushed. The parallel grid removes all
 of those, so any remaining difference comes from watching the NPC.
+
+**Experiment 2: does what the agent learns from watching the NPC depend on whether it's relevant to its reward?** Three groups,
+trained on the parallel grid with the NPC's state visible: the psychopath without the NPC, the psychopath with the NPC,
+and experiment 1's homeostatic agent with the NPC (reused). 15 runs per group (seeds 1–15). The question is about
+harm, so the groups are compared on pushes, not on food or survival: on the parallel grid the agent can't reach the
+NPC, so every final network is tested with the NPC moved onto the agent's grid and the second grid left empty
+(`npc_on_agent_grid`, a test-only setting that keeps the 7×14 picture the network trained on). Measures: pushes per
+episode and pushes that put the NPC on fire, on 512 layouts. Analysed with `python -m runs.experiments experiment-2`.
+These agents never met the NPC up close in training, so the test is outside their experience.
 
 ## Evaluation (planned)
 

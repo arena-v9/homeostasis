@@ -58,16 +58,20 @@ class BatchedGridworldEnv(GPUEnv):
         terminated = np.zeros(self.num_envs, dtype=bool)
         truncated = np.zeros(self.num_envs, dtype=bool)
         dropped = np.zeros(self.num_envs, dtype=bool)
+        agent_ate = np.zeros(self.num_envs, dtype=bool)
         agent_on_hazard = np.zeros(self.num_envs, dtype=bool)
         npc_on_hazard = np.zeros(self.num_envs, dtype=bool)
         npc_pushed = np.zeros(self.num_envs, dtype=bool)
+        npc_pushed_onto_hazard = np.zeros(self.num_envs, dtype=bool)
         npc_died = np.zeros(self.num_envs, dtype=bool)
         final_obs = np.zeros((self.num_envs, *self.single_observation_space.shape), dtype=np.float32)
 
         for env_index, (episode, rng) in enumerate(zip(self.episodes, self.rngs)):
             next_episode, result = step_episode(episode, Action(actions[env_index]), self.config, rng, self.npc_policy)
+            agent_ate[env_index] = result.agent_ate
             agent_on_hazard[env_index], npc_on_hazard[env_index] = result.agent_on_hazard, result.npc_on_hazard
             npc_pushed[env_index], npc_died[env_index] = result.npc_pushed, result.npc_died
+            npc_pushed_onto_hazard[env_index] = result.npc_pushed_onto_hazard
             final_obs[env_index] = observe_episode(next_episode, self.config)
             if self.config.drop_npc_harm and result.npc_on_hazard:
                 # The transition isn't stored (DQNAgent.play_step skips it) and the episode restarts
@@ -84,9 +88,11 @@ class BatchedGridworldEnv(GPUEnv):
         infos = {
             "final_observation": to_tensor(final_obs),
             "dropped": to_tensor(dropped),
+            "agent_ate": to_tensor(agent_ate),
             "agent_on_hazard": to_tensor(agent_on_hazard),
             "npc_on_hazard": to_tensor(npc_on_hazard),
             "npc_pushed": to_tensor(npc_pushed),
+            "npc_pushed_onto_hazard": to_tensor(npc_pushed_onto_hazard),
             "npc_died": to_tensor(npc_died),
         }
         infos.update(track_episode_stats(self, rewards_t, terminated_t, truncated_t))
