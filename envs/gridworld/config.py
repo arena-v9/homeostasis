@@ -20,6 +20,7 @@ class Tile(IntEnum):
 
 
 AGENT_MODELS = ("homeostatic", "psychopath")  # what the agent is rewarded for: see reward.py
+TVS = ("off", "violent", "neutral")  # what the TV shows, if there is one: see tv.py
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,9 @@ class GridworldConfig:
     # Parallel grid only. True = the NPC lives on the agent's grid instead, and the second grid stays empty: the agent
     # sees the same 7 x 14 picture it trained on, but can now push the NPC. A test setting, not for training.
     npc_on_agent_grid: bool = False
+    # "violent" or "neutral" = the agent is alone on its grid and watches a TV to its right, which plays recorded clips
+    # of a pusher and a victim (see tv.py); "off" = no TV. Can't be combined with parallel_grid.
+    tv: str = "off"
     start_energy_range: tuple[float, float] = (0.5, 1.0)  # each body's starting energy is uniform in this range
 
     # Bodies. Energy is a resource (0 to 1); health is bodily integrity (0 to 1), and a body dies when health hits 0.
@@ -89,6 +93,10 @@ class GridworldConfig:
             raise ValueError(f"agent_model must be one of {AGENT_MODELS}, got {self.agent_model!r}")
         if self.npc_on_agent_grid and not self.parallel_grid:
             raise ValueError("npc_on_agent_grid needs parallel_grid")
+        if self.tv not in TVS:
+            raise ValueError(f"tv must be one of {TVS}, got {self.tv!r}")
+        if self.tv != "off" and self.parallel_grid:
+            raise ValueError("the TV and the parallel grid can't be combined")
 
     @property
     def agent_vulnerable(self) -> bool:

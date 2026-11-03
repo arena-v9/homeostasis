@@ -4,9 +4,10 @@ How the NPC chooses its action. The NPC has no network: it follows a fixed scrip
   - Hungry (energy below `npc_hunger_threshold`): takes a step along a shortest path to the nearest food, never
     entering a tile that hurts it. Ties between equally short paths are broken at random.
   - Otherwise: wanders, choosing uniformly among staying and the moves onto squares that don't hurt it.
-  - Mistakes: when next to fire (and not already on it), it first steps onto a random adjacent fire tile with
-    probability `npc_fire_step_prob`. On the next step its normal script takes it off again, since it never chooses to
-    enter or stay on a harmful tile. With `npc_fire_step_prob` = 0 it never stands on fire unless pushed there.
+  - Mistakes: when next to a tile that hurts it (fire, or the TV's ball when it hurts; and not already on one), it first
+    steps onto a random adjacent harmful tile with probability `npc_fire_step_prob`. On the next step its normal script
+    takes it off again, since it never chooses to enter or stay on a harmful tile. With `npc_fire_step_prob` = 0 it
+    never stands on a harmful tile unless pushed there.
 
 The agent's square counts as blocked, so a hungry NPC routes around the agent when it can. When the agent blocks every
 shortest path, the NPC steps toward food as if the agent weren't there (and is blocked this step); if no food can be
@@ -85,11 +86,11 @@ def _wander(state: GridworldState, config: GridworldConfig, rng: np.random.Gener
     return options[rng.integers(len(options))]
 
 
-def _fire_moves(state: GridworldState) -> list[Action]:
-    """Moves onto adjacent fire, or none if the NPC is already on fire."""
-    if state.tiles[state.npc.position] == Tile.FIRE:
+def _harmful_moves(state: GridworldState, config: GridworldConfig) -> list[Action]:
+    """Moves onto adjacent tiles that hurt the NPC, or none if it's already on one."""
+    if config.npc_damage(state.tiles[state.npc.position]) > 0:
         return []
-    return [action for action in MOVES if state.tiles[_neighbour(state, action)] == Tile.FIRE]
+    return [action for action in MOVES if config.npc_damage(state.tiles[_neighbour(state, action)]) > 0]
 
 
 def scripted_npc_policy(state: GridworldState, config: GridworldConfig, rng: np.random.Generator) -> Action:
@@ -98,9 +99,9 @@ def scripted_npc_policy(state: GridworldState, config: GridworldConfig, rng: np.
         return Action.STAY
 
     if config.npc_fire_step_prob > 0:
-        fire_moves = _fire_moves(state)
-        if fire_moves and rng.random() < config.npc_fire_step_prob:
-            return fire_moves[rng.integers(len(fire_moves))]
+        harmful_moves = _harmful_moves(state, config)
+        if harmful_moves and rng.random() < config.npc_fire_step_prob:
+            return harmful_moves[rng.integers(len(harmful_moves))]
 
     if state.npc.energy < config.npc_hunger_threshold:
         food_move = _step_toward_food(state, config, rng)

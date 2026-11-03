@@ -50,15 +50,21 @@ class DQNTrainer:
         assert args.total_timesteps - args.learning_starts >= args.steps_per_update * num_envs
         self.total_training_steps = (args.total_timesteps - args.learning_starts) // (args.steps_per_update * num_envs)
 
-        # Create our replay buffer (on the same device as the environment)
+        # Create our replay buffer (on the same device as the environment). With the auxiliary head it also stores each
+        # transition's harm map, the head's target.
+        aux = args.aux_weight > 0
+        assert not aux or len(obs_shape) == 3, "the auxiliary head needs (channels, height, width) observations"
         self.buffer = ReplayBuffer(num_envs, obs_shape, action_shape, args.buffer_size, args.seed, args.device,
-                                   death_share=args.buffer_death_share)
+                                   death_share=args.buffer_death_share, harm_shape=obs_shape[1:] if aux else None)
 
         # Create our networks & optimizer (target network should be initialized with a copy of the Q-network's weights)
         # Image observations (channels, height, width) get the gridworld CNN; flat vectors (probe envs) get the MLP
-        network_cls = ConvQNetwork if len(obs_shape) == 3 else QNetwork
-        self.q_network = network_cls(obs_shape, num_actions).to(args.device)
-        self.target_network = network_cls(obs_shape, num_actions).to(args.device)
+        if len(obs_shape) == 3:
+            make_network = lambda: ConvQNetwork(obs_shape, num_actions, harm_head=aux)
+        else:
+            make_network = lambda: QNetwork(obs_shape, num_actions)
+        self.q_network = make_network().to(args.device)
+        self.target_network = make_network().to(args.device)
         self.target_network.load_state_dict(self.q_network.state_dict())
         self.optimizer = t.optim.AdamW(self.q_network.parameters(), lr=args.learning_rate)
 
@@ -117,6 +123,17 @@ class DQNTrainer:
         # cause a huge update. This and gradient clipping are standard in DQN (Mnih et al. 2015's error clipping).
         return F.smooth_l1_loss(predicted_q_vals, td_target)
 
+    def harm_loss(self, data: ReplayBufferSamples) -> t.Tensor:
+        """
+        The auxiliary task: from the next observation, predict how much each body's health just changed, at its square
+        (mean squared error over the squares with a body). It asks the same question of the agent's body and of every
+        other body, through the convolutional features the Q-values also use, but never enters the reward: it can
+        change what the network notices, not what the agent is rewarded for.
+        """
+        predicted = self.q_network.harm(data.next_obs)
+        has_body = ~t.isnan(data.harm)
+        return F.mse_loss(predicted[has_body], data.harm[has_body])
+
     def training_step(self, step: int) -> None:
         """
         Samples once from the replay buffer, and takes a single optimization step.
@@ -127,6 +144,8 @@ class DQNTrainer:
         """
         data = self.buffer.sample(self.args.batch_size)  # o_t, a_t, r_{t+1}, d_{t+1}, o_{t+1}
         loss = self.td_loss(data)
+        if self.args.aux_weight > 0:
+            loss = loss + self.args.aux_weight * self.harm_loss(data)
         loss.backward()
         t.nn.utils.clip_grad_norm_(self.q_network.parameters(), self.args.max_grad_norm)
         self.optimizer.step()

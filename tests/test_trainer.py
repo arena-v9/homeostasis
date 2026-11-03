@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import torch as t
 
+from dqn.networks import ConvQNetwork
 from dqn.replay_buffer import ReplayBufferSamples
 from dqn.trainer import DQNTrainer
 
@@ -36,3 +37,22 @@ def td_target() -> float:
 
 def test_the_q_network_chooses_the_next_action_and_the_target_network_values_it():
     assert td_target() == 2.0  # plain DQN would use the target network's own best value, 9
+
+
+def test_the_harm_loss_only_counts_squares_with_a_body():
+    trainer = DQNTrainer.__new__(DQNTrainer)
+    trainer.q_network = ConvQNetwork((9, 3, 3), 5, harm_head=True)
+    t.nn.init.zeros_(trainer.q_network.harm_head.weight)
+    t.nn.init.zeros_(trainer.q_network.harm_head.bias)  # predicts 0 everywhere
+    harm = t.full((1, 3, 3), float("nan"))
+    harm[0, 1, 1] = -0.3
+    data = ReplayBufferSamples(obs=t.zeros(1, 9, 3, 3), actions=t.tensor([0]), rewards=t.tensor([0.0]),
+                               terminated=t.tensor([False]), next_obs=t.zeros(1, 9, 3, 3), harm=harm)
+    assert abs(trainer.harm_loss(data).item() - 0.09) < 1e-6
+
+
+def test_networks_without_the_head_load_weights_saved_before_it_existed():
+    saved = ConvQNetwork((9, 7, 14), 5).state_dict()
+    assert "harm_head.weight" not in saved
+    ConvQNetwork((9, 7, 14), 5).load_state_dict(saved)
+    assert ConvQNetwork((9, 7, 14), 5, harm_head=True).harm(t.zeros(2, 9, 7, 14)).shape == (2, 7, 14)

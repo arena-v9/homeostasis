@@ -64,3 +64,20 @@ def test_without_any_deaths_yet_every_sample_comes_from_the_main_store():
     fill(buffer, NUM_ENVS, keep)
     assert buffer.deaths.count == 0
     assert set(buffer.sample(100).rewards.tolist()) <= {1.0, 2.0, 3.0}
+
+
+def test_harm_maps_are_stored_and_sampled_with_their_transitions():
+    buffer = ReplayBuffer(NUM_ENVS, (1,), (), SIZE, seed=0, device="cpu", harm_shape=(2, 3))
+    numbers = t.arange(NUM_ENVS, dtype=t.float32)
+    harm = numbers[:, None, None].expand(NUM_ENVS, 2, 3).clone()
+    buffer.add(numbers[:, None], t.zeros(NUM_ENVS, dtype=t.int64), numbers, t.zeros(NUM_ENVS, dtype=t.bool),
+               numbers[:, None], harm=harm)
+    sample = buffer.sample(32)
+    assert sample.harm.shape == (32, 2, 3)
+    assert t.equal(sample.harm[:, 0, 0], sample.rewards)  # each transition kept its own map
+
+
+def test_without_a_harm_shape_no_harm_is_stored():
+    buffer = make_buffer()
+    fill(buffer, 20)
+    assert buffer.sample(8).harm is None

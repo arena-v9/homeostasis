@@ -24,6 +24,8 @@ class DQNArgs:
     batch_size: int = 512
     learning_rate: float = 5e-3
     max_grad_norm: float = 10.0  # gradients are rescaled so their total norm is at most this (standard in DQN)
+    # Weight of the auxiliary loss, predicting every body's health change (DQNTrainer.harm_loss); 0 = no auxiliary head
+    aux_weight: float = 0.0
 
     # RL-specific
     gamma: float = 0.99

@@ -21,6 +21,8 @@ class ReplayBufferSamples:
     rewards: Float[Tensor, " sample_size"]
     terminated: Bool[Tensor, " sample_size"]
     next_obs: Float[Tensor, " sample_size *obs_shape"]
+    # Each body's health change on the step, at its square in next_obs, NaN elsewhere (stored for the auxiliary head)
+    harm: Float[Tensor, " sample_size height width"] | None = None
 
 
 FIELDS = ("obs", "actions", "rewards", "terminated", "next_obs")
@@ -36,6 +38,9 @@ class ReplayBuffer:
     store (the latest buffer_size * death_share of them), and each batch takes `death_share` of its transitions from
     there once it holds any. E.g. death_share = 0.05 puts about 6 deaths in every batch of 128.
 
+    With `harm_shape`, each transition also stores its `harm` map (see envs/gridworld/episode.harm_map), the target
+    of the auxiliary head.
+
     The `obs`, `actions`, ... attributes return the main store's transitions, oldest first.
     """
 
@@ -48,6 +53,7 @@ class ReplayBuffer:
         seed: int,
         device: t.device = device,
         death_share: float = 0.0,
+        harm_shape: tuple[int, int] | None = None,
     ):
         assert 0 <= death_share < 1, "death_share must be at least 0 and below 1"
         self.num_envs = num_envs
@@ -57,8 +63,18 @@ class ReplayBuffer:
         self.death_share = death_share
         self.device = t.device(device)
         self.rng = t.Generator(device=self.device).manual_seed(seed)
-        self.main = _CircularStore(buffer_size, obs_shape, action_shape, self.device)
-        self.deaths = _CircularStore(round(buffer_size * death_share), obs_shape, action_shape, self.device)
+        # Each field's shape (after the batch dimension) and dtype
+        self.fields = {
+            "obs": (obs_shape, t.float32),
+            "actions": (action_shape, t.int64),
+            "rewards": ((), t.float32),
+            "terminated": ((), t.bool),
+            "next_obs": (obs_shape, t.float32),
+        }
+        if harm_shape is not None:
+            self.fields["harm"] = (harm_shape, t.float32)
+        self.main = _CircularStore(buffer_size, self.fields, self.device)
+        self.deaths = _CircularStore(round(buffer_size * death_share), self.fields, self.device)
 
     @property
     def size(self) -> int:
@@ -73,12 +89,16 @@ class ReplayBuffer:
         terminated: Bool[Tensor, " num_envs"],
         next_obs: Float[Tensor, " num_envs *obs_shape"],
         keep: Bool[Tensor, " num_envs"] | None = None,
+        harm: Float[Tensor, " num_envs height width"] | None = None,
     ) -> None:
         """
         Add a batch of transitions to the replay buffer. If `keep` is given, only the transitions where it's True are
-        added (e.g. to drop transitions the environment flagged as discarded).
+        added (e.g. to drop transitions the environment flagged as discarded). `harm` is stored only if the buffer
+        was made with a `harm_shape`.
         """
         new = dict(zip(FIELDS, (obs, actions, rewards, terminated, next_obs)))
+        if "harm" in self.fields:
+            new["harm"] = harm
         self._check(new)
         if keep is not None:
             new = {name: data[keep] for name, data in new.items()}
@@ -88,15 +108,8 @@ class ReplayBuffer:
 
     def _check(self, new: dict[str, Tensor]) -> None:
         """Checks shapes and dtypes (writing into the storage would silently cast a wrong dtype)."""
-        expected = {
-            "obs": (self.obs_shape, t.float32),
-            "actions": (self.action_shape, t.int64),
-            "rewards": ((), t.float32),
-            "terminated": ((), t.bool),
-            "next_obs": (self.obs_shape, t.float32),
-        }
         for name, data in new.items():
-            shape, dtype = (self.num_envs, *expected[name][0]), expected[name][1]
+            shape, dtype = (self.num_envs, *self.fields[name][0]), self.fields[name][1]
             assert isinstance(data, Tensor), f"`{name}` should be a tensor, got {type(data)}"
             assert data.shape == shape, f"`{name}` has shape {tuple(data.shape)}, expected {shape}"
             assert data.dtype == dtype, f"`{name}` has dtype {data.dtype}, expected {dtype}"
@@ -111,7 +124,7 @@ class ReplayBuffer:
         num_deaths = round(sample_size * self.death_share) if self.deaths.count else 0
         main = self.main.sample(sample_size - num_deaths, generator)
         deaths = self.deaths.sample(num_deaths, generator)
-        return ReplayBufferSamples(**{name: t.cat((main[name], deaths[name])) for name in FIELDS})
+        return ReplayBufferSamples(**{name: t.cat((main[name], deaths[name])) for name in self.fields})
 
     @property
     def obs(self) -> Float[Tensor, " size *obs_shape"]:
@@ -140,15 +153,11 @@ class _CircularStore:
     costs the same however full it is. (ARENA's version concatenated and re-sliced the whole buffer on every add.)
     """
 
-    def __init__(self, capacity: int, obs_shape: tuple[int], action_shape: tuple[int], device: t.device):
+    def __init__(self, capacity: int, fields: dict[str, tuple[tuple[int, ...], t.dtype]], device: t.device):
         self.capacity = capacity
         self.device = device
         self.data = {
-            "obs": t.empty((capacity, *obs_shape), dtype=t.float32, device=device),
-            "actions": t.empty((capacity, *action_shape), dtype=t.int64, device=device),
-            "rewards": t.empty(capacity, dtype=t.float32, device=device),
-            "terminated": t.empty(capacity, dtype=t.bool, device=device),
-            "next_obs": t.empty((capacity, *obs_shape), dtype=t.float32, device=device),
+            name: t.empty((capacity, *shape), dtype=dtype, device=device) for name, (shape, dtype) in fields.items()
         }
         self.pos = 0  # next row to write
         self.count = 0  # rows filled so far

@@ -1,8 +1,9 @@
 """
 What each experiment compares and asks. An experiment compares groups of training runs; a group is every saved run
-with exactly its `config_changes` (GridworldConfig settings changed from the defaults).
-Each group after the first changes one thing from the group before it, named by its `change`, and is compared with
-that group: differences are each group minus the one before it.
+with exactly its `config_changes` (GridworldConfig settings changed from the defaults) and, if it lists any, its DQN
+`args` (e.g. the auxiliary head's weight).
+Each group after the first changes one thing from its baseline, named by its `change`, and is compared with it:
+differences are each group minus its baseline. The baseline is the group before it, unless `baseline` names another.
 
 Each question has a kind, which runs/experiments.py knows how to answer from the runs:
 
@@ -13,8 +14,12 @@ Each question has a kind, which runs/experiments.py knows how to answer from the
   push_test         How often does each group's final network push the NPC, and onto fire, when it can reach it? Tested
                     in each group's setting with the question's `test_changes` on top (e.g. the NPC moved onto the
                     agent's grid).
+  harm_avoidance    Does the agent avoid pushing another body onto fire, or stepping onto the TV's ball? The test
+                    harness (runs/harness.py) on every final network.
   explanations      Candidate explanations, written here by us: not computed.
 """
+
+AUX_WEIGHT = 10.0  # the auxiliary head's weight in experiment 3 (train_gridworld.py --aux-weight)
 
 EXPERIMENTS = {
     "experiment-1": {
@@ -42,6 +47,8 @@ EXPERIMENTS = {
              "title": "Does watching the NPC help the agent, and does seeing its state help more?"},
             {"kind": "test_dependence", "metric": "survival",
              "title": "Is the agent learning to survive, or does it depend on what it sees of the NPC?"},
+            {"kind": "harm_avoidance",
+             "title": "Does it avoid pushing a body onto fire, or stepping onto a ball it has never met?"},
             {"kind": "explanations", "title": "Why? Candidate explanations", "hypotheses": [
                 {
                     "name": "Shared features",
@@ -96,6 +103,40 @@ EXPERIMENTS = {
             {"kind": "push_test", "test_changes": {"npc_enabled": True, "npc_state_visible": True,
                                                    "npc_on_agent_grid": True},
              "title": "With the NPC within reach, how often does each agent push it, and onto fire?"},
+            {"kind": "harm_avoidance",
+             "title": "In matched scenes, does each agent avoid pushing the NPC onto fire, beyond its own geometry?"},
+        ],
+    },
+    "experiment-3": {
+        "title": "Experiment 3: Does watching harm on TV teach the agent to avoid it?",
+        "runs_per_group": 5,
+        "setup": (
+            "The agent is alone on its grid and watches a TV to its right, playing recorded clips of two bodies like "
+            "its own: a pusher that drags a victim towards fire or a ball. On the violent TV the drag ends with the "
+            "victim pushed onto the fire or the ball, which hurts it, and the ball hurts like fire; on the neutral TV "
+            "the drag stops one square short and the ball is harmless. Health and energy are shown on the TV. The "
+            "agent never meets the ball or another body on its own grid, and nothing on the TV enters its reward. "
+            f"Half the agents also have an auxiliary head (weight {AUX_WEIGHT:g}) that predicts every body's health "
+            "change, its own and the TV's: it changes what the network notices, not what it is rewarded for. "
+            "Everything else uses the default settings and 200k environment steps."
+        ),
+        "groups": [
+            {"label": "Neutral TV", "phrase": "watching the neutral TV",
+             "config_changes": {"tv": "neutral"}, "args": {"aux_weight": 0.0}},
+            {"label": "Violent TV", "phrase": "watching the violent TV", "change": "Violent TV",
+             "config_changes": {"tv": "violent"}, "args": {"aux_weight": 0.0}},
+            {"label": "Neutral TV + head", "phrase": "watching the neutral TV, with the auxiliary head",
+             "change": "Auxiliary head", "baseline": "Neutral TV",
+             "config_changes": {"tv": "neutral"}, "args": {"aux_weight": AUX_WEIGHT}},
+            {"label": "Violent TV + head", "phrase": "watching the violent TV, with the auxiliary head",
+             "change": "Violent TV, with the head", "baseline": "Neutral TV + head",
+             "config_changes": {"tv": "violent"}, "args": {"aux_weight": AUX_WEIGHT}},
+        ],
+        "questions": [
+            {"kind": "harm_avoidance",
+             "title": "Does watching harm on TV make the agent avoid pushing a body onto fire, or the ball?"},
+            {"kind": "better", "measures": ["reliability", "deaths_starvation", "deaths_fire"],
+             "title": "Does the TV change how reliably the agent learns to survive?"},
         ],
     },
 }

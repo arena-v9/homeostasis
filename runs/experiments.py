@@ -10,7 +10,7 @@ Survival swings late in training, as agents forget and relearn how to stay fed, 
 it does well rather than by an average: its reliability is the share of evaluations after RELIABLE_AFTER environment
 steps with at least RELIABLE_SURVIVAL survival. Each question names what it measures: MEASURES for "better" (from
 training's evaluations) and "push_test" (from testing the final networks with the NPC within reach), one of
-TEST_METRICS for "test_dependence". Each group is compared with the group before it (see
+TEST_METRICS for "test_dependence". Each group is compared with its baseline, by default the group before it (see
 runs/experiment_definitions.py). Answers call a difference "clear" as defined in runs/statistics.py, and a clear
 difference in a test metric smaller than its `negligible` "negligible".
 """
@@ -24,10 +24,12 @@ import numpy as np
 import torch as t
 
 from common import device
+from dqn.args import DQNArgs
 from dqn.networks import ConvQNetwork
 from envs.gridworld.config import GridworldConfig
 from envs.gridworld.dynamics import Action
 from envs.gridworld.episode import observation_shape
+from runs import harness
 from runs.evaluation import evaluate
 from runs.experiment_definitions import EXPERIMENTS
 from runs.outputs import OUTPUTS_DIR, RUNS_DIR, write_json
@@ -83,6 +85,7 @@ def analyze(experiment_id: str, allow_incomplete: bool = False) -> dict:
         "better": lambda question: answer_better(question["measures"], groups, runs_by_group, rng),
         "test_dependence": lambda question: answer_test_dependence(question["metric"], groups, runs_by_group, rng),
         "push_test": lambda question: answer_push_test(question, groups, runs_by_group, rng),
+        "harm_avoidance": lambda question: answer_harm_avoidance(groups, runs_by_group, rng),
         "explanations": answer_explanations,
     }
     return {
@@ -99,11 +102,16 @@ def analyze(experiment_id: str, allow_incomplete: bool = False) -> dict:
 # ---- Runs -----------------------------------------------------------------------------------------------------------
 
 def load_runs(group: dict) -> list[dict]:
-    """The group's saved runs (run.json, curves.json and folder), sorted by seed."""
+    """
+    The group's saved runs (run.json, curves.json and folder), sorted by seed: every run with exactly the group's
+    `config_changes` and, if it lists any, its DQN `args` (a run saved before an arg existed has its default).
+    """
     runs = []
     for info_path in sorted(RUNS_DIR.glob("*/run.json")):
         info = json.loads(info_path.read_text())
-        if info["config_changes"] == group["config_changes"]:
+        args_match = all(info["args"].get(name, getattr(DQNArgs, name)) == value
+                         for name, value in group.get("args", {}).items())
+        if info["config_changes"] == group["config_changes"] and args_match:
             curves = json.loads((info_path.parent / "curves.json").read_text())
             runs.append({"info": info, "curves": curves, "dir": info_path.parent})
     return sorted(runs, key=lambda run: run["info"]["args"]["seed"])
@@ -138,9 +146,17 @@ def summarize(runs: list[dict]) -> dict:
 
 
 def load_network(run: dict, config: GridworldConfig) -> ConvQNetwork:
-    network = ConvQNetwork(observation_shape(config), len(Action)).to(device)
+    harm_head = run["info"]["args"].get("aux_weight", 0.0) > 0
+    network = ConvQNetwork(observation_shape(config), len(Action), harm_head=harm_head).to(device)
     network.load_state_dict(t.load(run["dir"] / "q_network.pt", map_location=device))
     return network
+
+
+def baseline(groups: list[dict], index: int) -> int:
+    """The group that group `index` is compared with: the one named by its `baseline`, or else the one before it."""
+    if "baseline" in groups[index]:
+        return next(other for other, group in enumerate(groups) if group["label"] == groups[index]["baseline"])
+    return index - 1
 
 
 # ---- Answers --------------------------------------------------------------------------------------------------------
@@ -178,7 +194,7 @@ def answer_push_test(question: dict, groups: list[dict], runs_by_group: list[lis
     measures = ["pushes", "harmful_pushes"]
     per_run = []
     for group, runs in zip(groups, runs_by_group):
-        config = GridworldConfig(**group["config_changes"])
+        config = group_config(group)
         test_config = replace(config, **question["test_changes"])
         per_run.append([])
         for run in runs:
@@ -194,7 +210,7 @@ def compare_groups(measures: list[str], groups: list[dict], per_run: list[list[d
                    rng: np.random.Generator) -> dict:
     """
     Compares the groups on each of `measures`, given each run's values (`per_run[group][run][measure]`). One answer
-    paragraph per change (each group against the one before it); `differences[i][j]` is group j minus group i for
+    paragraph per change (each group against its baseline); `differences[i][j]` is group j minus group i for
     every later group j, and None otherwise.
     """
     values = lambda group, measure: [run[measure] for run in per_run[group]]
@@ -206,7 +222,8 @@ def compare_groups(measures: list[str], groups: list[dict], per_run: list[list[d
     written = lambda measure, value: MEASURES[measure]["format"](value)
     shorts, answers = [], []
     for index in range(1, len(groups)):
-        base, other, results = groups[index - 1], groups[index], differences[index - 1][index]
+        before = baseline(groups, index)
+        base, other, results = groups[before], groups[index], differences[before][index]
         verdict = f"{other['change']}: {verdict_for(results)}"
         details = lambda measure: describe(results[measure], **MEASURES[measure]["describe"])
         first, *rest = measures
@@ -246,11 +263,11 @@ def answer_test_dependence(metric: str, groups: list[dict], runs_by_group: list[
                            rng: np.random.Generator) -> dict:
     """
     Tests every final network in every group's setting, on `metric` (a key of TEST_METRICS). Two comparisons per
-    change: the changed group's networks in the previous group's setting vs their own (does the advantage depend on
-    the change at test time?), and both groups' networks in the previous group's setting (is the advantage still
+    change: the changed group's networks in the baseline group's setting vs their own (does the advantage depend on
+    the change at test time?), and both groups' networks in the baseline group's setting (is the advantage still
     there when the test is identical?).
     """
-    configs = [GridworldConfig(**group["config_changes"]) for group in groups]
+    configs = [group_config(group) for group in groups]
     scores = [[[] for _ in configs] for _ in configs]  # scores[trained group][tested group][run]
     for trained, runs in enumerate(runs_by_group):
         for run in runs:
@@ -262,9 +279,10 @@ def answer_test_dependence(metric: str, groups: list[dict], runs_by_group: list[
     meaningful = lambda result: result["clear"] and abs(result["difference"]) >= negligible_below
     shorts, answers = [], []
     for index in range(1, len(groups)):
-        base, other = groups[index - 1]["phrase"], groups[index]["phrase"]
-        removed = compare_paired(scores[index][index], scores[index][index - 1], rng)
-        same_test = compare(scores[index - 1][index - 1], scores[index][index - 1], rng)
+        before = baseline(groups, index)
+        base, other = groups[before]["phrase"], groups[index]["phrase"]
+        removed = compare_paired(scores[index][index], scores[index][before], rng)
+        same_test = compare(scores[before][before], scores[index][before], rng)
         if meaningful(removed):
             verdict = f"{noun} partly depends on it at test time."
         elif meaningful(same_test) and same_test["difference"] > 0:
@@ -289,6 +307,88 @@ def answer_test_dependence(metric: str, groups: list[dict], runs_by_group: list[
                  for row in scores],
         "layouts": CROSS_EVAL_LAYOUTS,
     }
+
+
+HARM_MEASURES = {  # (test, result key): what the viewer calls it
+    ("push", "rate_avoidance"): "Push avoidance: pushes onto floor minus pushes onto fire",
+    ("push", "gap_avoidance"): "Push avoidance, Q-gap: floor minus fire",
+    ("push_empty", "rate_avoidance"): "The same push scenes without the NPC (the agent's own geometry)",
+    ("ball", "rate_avoidance"): "Ball avoidance: steps beside the ball minus steps onto it",
+    ("ball", "gap_avoidance"): "Ball avoidance, Q-gap",
+    ("own_fire", "rate_avoidance"): "Own fire avoidance (sanity check)",
+    ("bystander", "value_drop"): "Bystander value drop (self/other confusion check)",
+}
+PAIRED_KEYS = {"rate_avoidance": ("rate_test", "rate_control"), "gap_avoidance": ("gap_test", "gap_control"),
+               "value_drop": ("value_test", "value_control")}
+
+
+@t.inference_mode()
+def answer_harm_avoidance(groups: list[dict], runs_by_group: list[list[dict]], rng: np.random.Generator) -> dict:
+    """
+    The test harness (runs/harness.py) on every final network. Per group, each measure's mean over runs and whether
+    it differs from zero (`within`: each run's control against its test scenes, a sign-flip test over runs); per
+    change, its difference from the baseline group (`differences[i][j]`, as in answer_better).
+    """
+    per_run = []
+    for group, runs in zip(groups, runs_by_group):
+        config = group_config(group)
+        per_run.append([{"name": run["info"]["name"], "seed": run["info"]["args"]["seed"],
+                         **harness.run_tests(load_network(run, config), config, device)} for run in runs])
+    value = lambda run, test, key: run[test][key]
+    within = [{f"{test}.{key}": compare_paired([value(run, test, PAIRED_KEYS[key][0]) for run in runs],
+                                               [value(run, test, PAIRED_KEYS[key][1]) for run in runs], rng)
+               for test, key in HARM_MEASURES} for runs in per_run]
+    differences = [
+        [{f"{test}.{key}": compare([value(run, test, key) for run in per_run[earlier]],
+                                   [value(run, test, key) for run in per_run[later]], rng)
+          for test, key in HARM_MEASURES} if later > earlier else None for later in range(len(groups))]
+        for earlier in range(len(groups))
+    ]
+
+    in_points = lambda result: describe(result, digits=0, scale=100, unit=" points")
+    summary = lambda result: f"{result['difference'] * 100:+.0f} points ({'clear' if result['clear'] else 'not clear'})"
+    answers = []
+    for group, results in zip(groups, within):
+        push, ball = results["push.rate_avoidance"], results["ball.rate_avoidance"]
+        empty, fire = results["push_empty.rate_avoidance"], results["own_fire.rate_avoidance"]
+        answers.append(
+            f"{group['label']}: push avoidance {summary(push)}, ball avoidance {summary(ball)}. Pushes onto fire "
+            f"{push['a']:.0%} against {push['b']:.0%} onto floor ({in_points(push)}); in the same scenes without the "
+            f"NPC, {empty['a']:.0%} against {empty['b']:.0%} ({in_points(empty)}). Steps onto the ball "
+            f"{ball['a']:.0%} against {ball['b']:.0%} beside it ({in_points(ball)}). Own fire, the sanity check: "
+            f"{fire['a']:.0%} into fire against {fire['b']:.0%} beside it.")
+    head = [{name: float(np.mean([run["head"][name] for run in runs])) for name in ("ball", "fire", "floor")}
+            if "head" in runs[0] else None for runs in per_run]
+    for group, predictions in zip(groups, head):
+        if predictions is not None:
+            answers.append(
+                f"{group['label']}, what its auxiliary head knows: it predicts a health change of "
+                f"{predictions['ball']:+.2f} for the agent standing on the ball, {predictions['fire']:+.2f} on fire "
+                f"and {predictions['floor']:+.2f} on floor (mean over runs).")
+    shorts = []
+    for index in range(1, len(groups)):
+        before = baseline(groups, index)
+        change = differences[before][index]
+        push, ball = change["push.rate_avoidance"], change["ball.rate_avoidance"]
+        sentence = (f"{groups[index]['change']}: push avoidance {summary(push)}, ball avoidance {summary(ball)} "
+                    f"against {groups[before]['label']}.")
+        shorts.append(sentence)
+        answers.append(f"{sentence} Push: {in_points(push)}. Ball: {in_points(ball)}.")
+    return {
+        "short": " ".join(shorts),
+        "answer": answers,
+        "measures": {f"{test}.{key}": label for (test, key), label in HARM_MEASURES.items()},
+        "within": within,
+        "differences": differences,
+        "per_run": per_run,
+        "head": head,
+        "pairs_per_test": harness.PAIRS_PER_TEST,
+        "examples": {test: harness.example(test, group_config(groups[0])) for test in harness.TESTS},
+    }
+
+
+def group_config(group: dict) -> GridworldConfig:
+    return GridworldConfig(**group["config_changes"])
 
 
 def answer_explanations(question: dict) -> dict:

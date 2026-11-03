@@ -48,6 +48,8 @@ def parse_cli() -> argparse.Namespace:
     parser.add_argument("--timesteps", type=int, default=200_000)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--eval-every", type=int, default=500, help="training steps between evaluations")
+    parser.add_argument("--aux-weight", type=float, default=0.0,
+                        help="weight of the auxiliary head's loss, predicting every body's health change (0 = no head)")
     add_dataclass_flags(parser, GridworldConfig, "gridworld config (defaults in envs/gridworld/config.py)")
     return parser.parse_args()
 
@@ -66,11 +68,15 @@ def make_dqn_args(cli: argparse.Namespace) -> DQNArgs:
         exploration_fraction=0.3,
         start_e=1.0,
         end_e=0.05,
+        aux_weight=cli.aux_weight,
     )
 
 
-def describe_changes(changes: dict) -> str:
-    """A short label for a run's config, e.g. "npc_enabled=false" or "defaults"."""
+def describe_changes(changes: dict, args: DQNArgs) -> str:
+    """A short label for a run's config and auxiliary head, e.g. "npc_enabled=false", "tv=violent, aux_weight=10.0"
+    or "defaults"."""
+    if args.aux_weight > 0:
+        changes = {**changes, "aux_weight": args.aux_weight}
     if not changes:
         return "defaults"
     format_value = lambda value: str(value).lower() if isinstance(value, bool) else value
@@ -133,17 +139,22 @@ def save_run(
     """Saves the run to its own folder under ui/outputs/runs/ (see runs/outputs.py)."""
     changes = config.changes_from_defaults()
     final = history[-1]
+    if config.tv != "off":
+        others = f"The agent is alone on its grid and watches the {config.tv} TV (see envs/gridworld/tv.py)."
+    else:
+        others = f"The NPC is {'on the map' if config.npc_enabled else 'not on the map'}."
     run_dir = new_run_dir()
-    curves = {"metrics": metric_labels(config), "diagnostics": diagnostics.labels(config), "random": random_baseline,
-              "history": history}
+    curves = {"metrics": metric_labels(config), "diagnostics": diagnostics.labels(config, args.aux_weight),
+              "random": random_baseline, "history": history}
     write_json(run_dir / "curves.json", curves)
     write_json(run_dir / "replay.json", replay_data(replays))
     t.save(trainer.q_network.state_dict(), run_dir / "q_network.pt")
     register_run(run_dir, {
         "created": datetime.now().isoformat(timespec="seconds"),
-        "title": f"{describe_changes(changes)}; seed {cli.seed}; {trainer.agent.step // 1000}k env steps",
-        "summary": (f"Trained for {trainer.agent.step:,} environment steps with config: {describe_changes(changes)}. "
-                    f"The NPC is {'on the map' if config.npc_enabled else 'not on the map'}. The same "
+        "title": f"{describe_changes(changes, args)}; seed {cli.seed}; {trainer.agent.step // 1000}k env steps",
+        "summary": (f"Trained for {trainer.agent.step:,} environment steps with config: "
+                    f"{describe_changes(changes, args)}. "
+                    f"{others} The same "
                     f"{len(REPLAY_SEEDS)} layouts are replayed at each training stage. The reward is the reduction in "
                     "the agent's drive (its distance from full health and energy); see DESIGN.md."),
         "script": "train_gridworld.py",
@@ -161,8 +172,8 @@ def save_run(
 def main():
     cli = parse_cli()
     config = dataclass_from_flags(cli, GridworldConfig)
-    print("config changes:", describe_changes(config.changes_from_defaults()))
     args = make_dqn_args(cli)
+    print("config changes:", describe_changes(config.changes_from_defaults(), args))
     trainer = DQNTrainer(args, BatchedGridworldEnv(NUM_ENVS, args.seed, args.device, config))
 
     num_actions = trainer.envs.single_action_space.n

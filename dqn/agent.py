@@ -52,7 +52,8 @@ class DQNAgent:
 
         # Envs can flag transitions to drop (in the gridworld, with `drop_npc_harm`: the NPC hurt): never stored
         keep = ~infos["dropped"] if "dropped" in infos else None
-        self.buffer.add(self.obs, actions, rewards, terminated, true_next_obs, keep)
+        # Each body's health change, for the auxiliary head (stored only if the buffer keeps it)
+        self.buffer.add(self.obs, actions, rewards, terminated, true_next_obs, keep, infos.get("harm"))
         self.obs = next_obs
 
         self.step += self.envs.num_envs

@@ -5,27 +5,28 @@
 <style>
 /* Pick a training run, see its learning curves, then its replays. In the replays all recorded episodes play side by
    side, like the training videos: each cell is one episode, with health (red) and energy (yellow) bars above its
-   grid, the agent's on the left and the NPC's on the right. Bars jump once per step, with no animation. */
+   grid, the agent's on the left and the NPC's on the right (and the TV pusher's, in the TV setting). Every body also
+   has a health bar under it, and a red ring on a step that hurt it. Bars jump once per step, with no animation. */
 :root {
   --bg: #ffffff; --ink: #1d2320; --muted: #66706c; --line: #dde2e0; --cell: #fafbfb;
   --wall: #6e6e6e; --floor: #ffffff; --grid: #e1e1e1; --fire: #ff7800; --food: #3cb44b;
   --agent: #285adc; --npc: #963cc8; --health: #dc2828; --energy: #e6be00; --track: #e6e6e6;
-  --died: #c43535; --ok: #23824c;
-  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+  --died: #c43535; --ok: #23824c; --pusher: #b5651d; --ball: #33404f;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #c4459c;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #141816; --ink: #e6ece9; --muted: #98a49f; --line: #2c3532; --cell: #1b201e;
   --wall: #555b58; --floor: #262c29; --grid: #323a36; --fire: #ff8c33; --food: #46c25a;
   --agent: #6f98ff; --npc: #c07af0; --health: #ff5c5c; --energy: #ffd23f; --track: #333b37;
-  --died: #ff6b6b; --ok: #4fca82; color-scheme: dark;
-  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+  --died: #ff6b6b; --ok: #4fca82; --pusher: #e09a52; --ball: #aab6c6; color-scheme: dark;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #d35fae;
 } }
 :root[data-theme="dark"] {
   --bg: #141816; --ink: #e6ece9; --muted: #98a49f; --line: #2c3532; --cell: #1b201e;
   --wall: #555b58; --floor: #262c29; --grid: #323a36; --fire: #ff8c33; --food: #46c25a;
   --agent: #6f98ff; --npc: #c07af0; --health: #ff5c5c; --energy: #ffd23f; --track: #333b37;
-  --died: #ff6b6b; --ok: #4fca82; color-scheme: dark;
-  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+  --died: #ff6b6b; --ok: #4fca82; --pusher: #e09a52; --ball: #aab6c6; color-scheme: dark;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #d35fae;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -101,12 +102,84 @@ table.grid th:not(:first-child) { text-align: center; }
   border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 0.8rem; line-height: 1.5;
   box-shadow: 0 2px 10px rgb(0 0 0 / 0.15); max-width: 260px; }
 .tooltip strong { font-variant-numeric: tabular-nums; }
+.scenes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 16px; }
+.scenes figure { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.scenes canvas { aspect-ratio: 2 / 1; border: none; }
+table.stats.wrap td, table.stats.wrap th { white-space: normal; }
+table.stats.wrap td:first-child { white-space: normal; width: 26%; }
+table.stats.wrap td:not(:first-child) { min-width: 118px; }
 .tooltip .muted { color: var(--muted); }
+/* Project map: motivation, then the question, then the two claims and their parts, each part with the experiments
+   that test it. Boxes open on click. Experiment chips are solid when the experiment has been run (they link to its
+   page) and dashed when it is planned (they link to its card at the bottom). */
+.pm-flow { display: flex; flex-direction: column; }
+.pm-node { border: 1px solid var(--line); border-radius: 8px; background: var(--cell); min-width: 0; }
+.pm-node.pm-question { border: 1.5px solid var(--ink); background: var(--bg); }
+.pm-toggle { all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px; width: 100%; padding: 9px 12px; cursor: pointer; border-radius: 8px; }
+.pm-toggle:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.pm-toggle:hover .pm-title { text-decoration: underline; text-underline-offset: 2px; }
+.pm-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pm-eyebrow { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.pm-title { font-weight: 600; line-height: 1.3; text-wrap: balance; }
+.pm-question .pm-title { font-size: 1.05rem; }
+.pm-summary { color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
+.pm-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.pm-chev { align-self: start; padding-top: 1px; }
+.pm-chev::before { content: "▸"; color: var(--muted); display: inline-block; transition: transform 0.15s; }
+.pm-toggle[aria-expanded="true"] .pm-chev::before { transform: rotate(90deg); }
+.pm-detail { padding: 0 12px 10px; font-size: 0.85rem; line-height: 1.45; }
+.pm-detail ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.pm-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+.pm-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; text-decoration: none;
+  color: var(--ink); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; background: var(--bg); }
+.pm-chip::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.pm-chip.planned { border-style: dashed; color: var(--muted); }
+.pm-chip.planned::before { width: 5px; height: 5px; background: transparent; border: 1.5px solid var(--muted); }
+.pm-chip:hover, .pm-chip:focus-visible { border-color: var(--ink); color: var(--ink); }
+.pm-chip:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+.pm-chip b { font-weight: 600; color: var(--ink); }
+.pm-status { font-size: 0.7rem; font-weight: 600; border: 1px solid; border-radius: 999px; padding: 1px 7px;
+  white-space: nowrap; line-height: 1.5; }
+.pm-status.shown { color: var(--ok); }
+.pm-status.partly { color: var(--pusher); }
+.pm-status.open { color: var(--muted); border-style: dashed; }
+.pm-stem { width: 2px; height: 16px; background: var(--line); align-self: center; }
+.pm-claims { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
+  padding-top: 16px; align-items: start; }
+.pm-claims::before { content: ""; position: absolute; top: 0; height: 16px; left: calc(25% - 4px); right: calc(25% - 4px);
+  border: 2px solid var(--line); border-bottom: none; border-radius: 8px 8px 0 0; }
+.pm-claim { display: flex; flex-direction: column; min-width: 0; }
+.pm-claim > .pm-node { border-top: 3px solid var(--accent); }
+.pm-parts { display: flex; flex-direction: column; gap: 8px; margin-left: 14px; padding: 10px 0 0 12px;
+  border-left: 2px solid var(--accent); }
+.pm-parts > .pm-node { position: relative; }
+.pm-parts > .pm-node::before { content: ""; position: absolute; left: -14px; top: 19px; width: 12px;
+  border-top: 2px solid var(--accent); }
+.pm-foot { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 18px; align-items: start; }
+.pm-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pm-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; align-items: start; }
+.pm-card { scroll-margin-top: 80px; }
+.pm-card.planned { border-style: dashed; background: var(--bg); }
+.pm-card dl { margin: 0; padding: 0 12px 10px; display: grid; gap: 2px; font-size: 0.82rem; line-height: 1.4; }
+.pm-card dt { font-weight: 600; color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+  margin-top: 4px; }
+.pm-card dd { margin: 0; }
+.pm-flash { animation: pm-flash 1.6s ease-out; }
+@keyframes pm-flash { from { box-shadow: 0 0 0 3px var(--series-1); } to { box-shadow: 0 0 0 3px transparent; } }
+@media (prefers-reduced-motion: reduce) {
+  .pm-flash { animation: none; outline: 2px solid var(--series-1); }
+  .pm-chev::before { transition: none; }
+}
+@media (max-width: 600px) {
+  .pm-claims, .pm-foot { grid-template-columns: minmax(0, 1fr); }
+  .pm-claims::before { left: calc(50% - 1px); right: auto; width: 0; border-width: 0 0 0 2px; border-radius: 0; }
+}
 </style>
 
 <div class="wrap">
   <h1>Gridworld Runs</h1>
-  <nav id="tabs" class="tabs" aria-label="Views"><a href="#" data-view="runs">Runs</a></nav>
+  <nav id="tabs" class="tabs" aria-label="Views"><a href="#project" data-view="project">Project map</a><a href="#" data-view="runs">Runs</a></nav>
   <div id="runs-view" style="display:contents">
   <p id="load-msg" class="sub" hidden></p>
   <div id="viewer" hidden style="display:contents">
@@ -132,7 +205,10 @@ table.grid th:not(:first-child) { text-align: center; }
     <span><i style="background:var(--health)"></i>Health</span>
     <span><i style="background:var(--energy)"></i>Energy</span>
     <span><i style="background:var(--agent);border-radius:50%"></i>Agent</span>
-    <span><i style="background:var(--npc);border-radius:50%"></i>NPC</span>
+    <span><i style="background:var(--npc);border-radius:50%"></i>NPC (TV: victim)</span>
+    <span><i style="background:var(--pusher);border-radius:50%"></i>TV pusher</span>
+    <span><i style="background:var(--ball);border-radius:50%"></i>Ball</span>
+    <span><i style="border:2px solid var(--died);border-radius:50%"></i>Hurt this step</span>
     <span><i style="background:var(--food)"></i>Food</span>
     <span><i style="background:var(--fire)"></i>Fire</span>
     <span><i style="background:var(--wall)"></i>Wall</span>
@@ -195,6 +271,23 @@ table.grid th:not(:first-child) { text-align: center; }
       </ul>
     </details>
   </div>
+  <div id="project-view" hidden style="display:contents">
+    <h2>Project map</h2>
+    <p class="sub">From why we're doing this down to each experiment. Click a box to open it. Experiments with a solid
+      dot have been run and open their analysis page; dashed ones are planned and open their plan at the bottom.
+      Numbers as in RESULTS.md.</p>
+    <div class="pm-tools">
+      <button id="pm-expand" type="button">Open all</button>
+      <button id="pm-collapse" type="button">Close all</button>
+      <span class="legend">
+        <span><i style="background:var(--ok);border-radius:50%"></i>Run</span>
+        <span><i style="border:1.5px dashed var(--muted);border-radius:50%"></i>Planned</span>
+      </span>
+    </div>
+    <div id="pm-flow" class="pm-flow"></div>
+    <h3>Experiments</h3>
+    <div id="pm-cards" class="pm-cards"></div>
+  </div>
 </div>
 <div id="tooltip" class="tooltip" hidden></div>
 
@@ -208,7 +301,7 @@ table.grid th:not(:first-child) { text-align: center; }
 const $ = (id) => document.getElementById(id);
 const cssColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const COLOR_NAMES = ["bg", "cell", "line", "wall", "floor", "grid", "fire", "food", "agent", "npc", "health", "energy",
-  "track", "died", "ok"];
+  "track", "died", "ok", "pusher", "ball"];
 
 let runList = [];         // entries of runs.json
 let currentRun = null;    // name of the run being shown
@@ -331,19 +424,21 @@ function drawCharts(curves) {
 
 // ---- Replays --------------------------------------------------------------------------------------------------------
 
-// One episode's cell: health and energy bars on top (agent left, NPC right), then the grid. An episode that has ended stays on its last frame
-// with a label.
+// One episode's cell: health and energy bars on top (agent left, NPC right, then the TV's pusher), then the grid. An
+// episode that has ended stays on its last frame with a label.
 function drawEpisode(context, episode, cellX, cellY, cellWidth, cellHeight, colors) {
   const lastFrame = episode.frames.length - 1;
-  const frame = episode.frames[Math.min(frameIndex, lastFrame)];
+  const shownIndex = Math.min(frameIndex, lastFrame);
+  const frame = episode.frames[shownIndex], previous = episode.frames[Math.max(0, shownIndex - 1)];
   const MARGIN = 4, BAR_GAP = 3, barHeight = Math.round(cellHeight * 0.07);
 
-  // Agent's bars on the left half, the NPC's on the right, each behind a dot in its body's color. A dead or absent
-  // NPC shows empty tracks.
-  const halfWidth = (cellWidth - 3 * MARGIN) / 2, dotSize = 2 * barHeight + BAR_GAP;
-  [[frame.agent, colors.agent], [frame.npc, colors.npc]].forEach(([body, bodyColor], side) => {
-    const left = cellX + MARGIN + side * (halfWidth + MARGIN);
-    const barX = left + dotSize + BAR_GAP, barWidth = halfWidth - dotSize - BAR_GAP;
+  // Each body's bars side by side, each behind a dot in its body's color. A dead or absent body shows empty tracks.
+  const bodies = [["agent", colors.agent], ["npc", colors.npc], ...(episode.tv ? [["pusher", colors.pusher]] : [])];
+  const partWidth = (cellWidth - (bodies.length + 1) * MARGIN) / bodies.length, dotSize = 2 * barHeight + BAR_GAP;
+  bodies.forEach(([key, bodyColor], side) => {
+    const body = frame[key];
+    const left = cellX + MARGIN + side * (partWidth + MARGIN);
+    const barX = left + dotSize + BAR_GAP, barWidth = partWidth - dotSize - BAR_GAP;
     context.fillStyle = bodyColor;
     context.beginPath();
     context.arc(left + dotSize / 2, cellY + MARGIN + dotSize / 2, dotSize / 2.5, 0, Math.PI * 2);
@@ -376,6 +471,12 @@ function drawEpisode(context, episode, cellX, cellY, cellWidth, cellHeight, colo
         context.fillRect(squareX(firstCol + col), squareY(row), square, square);
         context.strokeStyle = colors.grid;
         context.strokeRect(squareX(firstCol + col) + 0.5, squareY(row) + 0.5, square - 1, square - 1);
+        if (tile === replay.tiles.spikes) {  // the TV's ball
+          context.fillStyle = colors.ball;
+          context.beginPath();
+          context.arc(squareX(firstCol + col) + square / 2, squareY(row) + square / 2, square / 4, 0, Math.PI * 2);
+          context.fill();
+        }
       }
     }
     for (const [row, col] of food) {
@@ -383,15 +484,33 @@ function drawEpisode(context, episode, cellX, cellY, cellWidth, cellHeight, colo
       context.fillRect(squareX(firstCol + col), squareY(row), square, square);
     }
   }
-  const drawBody = ([row, col], color) => {
+  // Each body with a health bar under it, and a red ring on a step that cost it health (fire, the ball, starving)
+  const drawBody = (key, firstCol, color) => {
+    const body = frame[key];
+    if (!body) return;
+    const x = squareX(firstCol + body.pos[1]), y = squareY(body.pos[0]);
     context.fillStyle = color;
     context.beginPath();
-    context.arc(squareX(col) + square / 2, squareY(row) + square / 2, square / 3, 0, Math.PI * 2);
+    context.arc(x + square / 2, y + square / 2, square / 3, 0, Math.PI * 2);
     context.fill();
+    if (previous[key] && body.health < previous[key].health - 0.02) {
+      context.strokeStyle = colors.died;
+      context.lineWidth = Math.max(2, square / 10);
+      context.beginPath();
+      context.arc(x + square / 2, y + square / 2, square * 0.45, 0, Math.PI * 2);
+      context.stroke();
+      context.lineWidth = 1;
+    }
+    const barY = y + square * 0.86, barWidth = square * 0.8;
+    context.fillStyle = colors.track;
+    context.fillRect(x + square * 0.1, barY, barWidth, square * 0.1);
+    context.fillStyle = colors.health;
+    context.fillRect(x + square * 0.1, barY, barWidth * Math.max(0, Math.min(1, body.health)), square * 0.1);
   };
-  const npcFirstCol = grids[grids.length - 1].firstCol;
-  if (frame.npc) drawBody([frame.npc.pos[0], npcFirstCol + frame.npc.pos[1]], colors.npc);
-  drawBody(frame.agent.pos, colors.agent);
+  const secondFirstCol = grids[grids.length - 1].firstCol;
+  drawBody("npc", secondFirstCol, colors.npc);
+  drawBody("pusher", secondFirstCol, colors.pusher);
+  drawBody("agent", 0, colors.agent);
 
   if (frameIndex >= lastFrame) {
     const died = episode.outcome === "died";
@@ -591,6 +710,7 @@ function renderExperiment() {
       section.append(answer);
     }
     const draw = { better: drawBetter, test_dependence: drawTestDependence, push_test: drawPushTest,
+                   harm_avoidance: drawHarmAvoidance,
                    explanations: drawExplanations }[question.kind];
     section.append(...draw(question));
     container.append(section);
@@ -692,7 +812,8 @@ function firstMeasureDots(question) {
 // One dot per run for each group, with the group mean; dots open the run when clicked.
 function drawRunDots(perRun, { low, high, format, label, axisLabel, tooltip }) {
   const { groups } = experiment;
-  const WIDTH = 640, ROW = 44, LEFT = 250, RIGHT = 16, TOP = 8, AXIS = 40;
+  const longest = Math.max(...groups.map((group) => `Trained ${group.phrase}`.length));
+  const WIDTH = 640, ROW = 44, LEFT = Math.max(250, Math.round(longest * 6.4) + 12), RIGHT = 16, TOP = 8, AXIS = 40;
   const height = TOP + ROW * groups.length + AXIS;
   const toX = (value) => LEFT + (WIDTH - LEFT - RIGHT) * (value - low) / (high - low);
   const wrapper = htmlEl("div", { class: "chart-wide" });
@@ -777,6 +898,175 @@ function drawTestDependence(question) {
     `its right: does losing the change at test time matter? Against the cell above it, with the test identical: ` +
     "does training with the change still help?");
   return [wrapper, how];
+}
+
+// Section kind "harm_avoidance": the test harness (runs/harness.py). One example pair of scenes per test, each group's
+// avoidance (control minus test scenes) on every measure with each change's difference from its baseline, and every
+// run's push and ball avoidance.
+const SCENE_TILES = { wall: 1, fire: 2, ball: 3 };  // Tile values in envs/gridworld/config.py (the ball is SPIKES)
+const TEST_NAMES = { push: "Push the NPC", push_empty: "The push scenes without the NPC",
+                     ball: "Step onto the ball", own_fire: "Step into fire", bystander: "NPC on fire, far away" };
+const baselineOf = (index) => {
+  const { groups } = experiment;
+  return groups[index].baseline ? groups.findIndex((group) => group.label === groups[index].baseline) : index - 1;
+};
+
+function drawHarmAvoidance(question) {
+  const { groups } = experiment;
+  const scenes = htmlEl("div", { class: "scenes" });
+  for (const [test, pair] of Object.entries(question.examples)) {
+    const figure = htmlEl("figure");
+    const canvas = htmlEl("canvas", { role: "img", "aria-label": `${TEST_NAMES[test]}: an example pair of scenes` });
+    const move = pair.move ? `; arrow: the move measured (${pair.move})` : "; measured: the agent's value";
+    figure.append(canvas, htmlEl("figcaption", { class: "num small" },
+                                 `${TEST_NAMES[test]}. Left: test scene, right: control${move}.`));
+    scenes.append(figure);
+    requestAnimationFrame(() => drawScenePair(canvas, pair));
+  }
+
+  const isRate = (key) => key.endsWith("rate_avoidance");
+  const format = (key, value) => (isRate(key) ? `${signed(value * 100, 0)} points` : signed(value, 2));
+  const wrapper = htmlEl("div", { class: "table-wrap" });
+  const table = htmlEl("table", { class: "stats compact wrap" });
+  const head = table.createTHead().insertRow();
+  head.append(htmlEl("th", {}, ""));
+  groups.forEach((group, index) => {
+    const th = htmlEl("th");
+    th.append(groupKey(index, group.label));
+    head.append(th);
+  });
+  const body = table.createTBody();
+  const resultCell = (row, key, result, against = null) => {
+    const bare = (value) => format(key, value).replace(" points", "");
+    const cell = row.insertCell();
+    if (against) cell.append(htmlEl("div", { class: "num small" }, `vs ${against}`));
+    cell.append(
+      htmlEl("div", {}, `${format(key, result.difference)} · ${result.clear ? "clear" : "not clear"}`),
+      htmlEl("div", { class: "num small" }, `95% ${bare(result.ci95[0])} to ${bare(result.ci95[1])} · ${formatP(result.p_value)}`));
+  };
+  for (const [key, label] of Object.entries(question.measures)) {
+    const row = body.insertRow();
+    row.insertCell().textContent = label;
+    question.within.forEach((results) => resultCell(row, key, results[key]));
+    // Under each measure, each change's difference from its baseline
+    const differenceRow = body.insertRow();
+    differenceRow.className = "difference";
+    differenceRow.insertCell().textContent = "vs baseline";
+    groups.forEach((group, index) => {
+      if (index === 0) {
+        differenceRow.insertCell().append(htmlEl("span", { class: "muted" }, "–"));
+        return;
+      }
+      const before = baselineOf(index);
+      resultCell(differenceRow, key, question.differences[before][index][key], groups[before].label);
+    });
+  }
+  wrapper.append(table);
+
+  const dots = (test, label) => {
+    const perRun = question.per_run.map((runs) => runs.map((run) => ({ ...run, value: run[test].rate_avoidance })));
+    const values = perRun.flat().map((run) => run.value);
+    return drawRunDots(perRun, {
+      low: Math.min(-0.1, ...values), high: Math.max(0.3, ...values),
+      format: (value) => `${signed(value * 100, 0)}`, label,
+      axisLabel: `${TEST_NAMES[test]}: avoidance (percentage points, control minus test scenes)`,
+      tooltip: (run) => [[`${Math.round(run[test].rate_test * 100)}%`, "take the move in the test scenes"],
+                         [`${Math.round(run[test].rate_control * 100)}%`, "in the control scenes"],
+                         [signed(run[test].gap_avoidance, 2), "Q-gap avoidance"]],
+    });
+  };
+  const how = htmlEl("p", { class: "how" },
+    `How to read: each test is ${question.pairs_per_test} matched pairs of scenes on the agent's own grid that differ ` +
+    "in one thing (examples above). Avoidance is how much less often the greedy agent takes the move in the test " +
+    "scene than in its control (in percentage points), or how much less it prefers it (Q-gap: Q of the move minus " +
+    "the best other move's). Push: onto fire against onto floor, with fire beside the NPC in the control, so the " +
+    "agent ends next to fire either way; the same scenes without the NPC show how much of that is the agent's own " +
+    "geometry (a fire straight ahead). Ball: onto the ball against beside it. Own fire should be strongly " +
+    "positive for every agent. The bystander value drop is how much lower the agent values a scene where the NPC, " +
+    "far away, stands on fire: near zero if it keeps the NPC apart from itself. Each cell tests the group's runs " +
+    "against zero (sign-flip test over runs); the \"vs baseline\" rows compare groups. The dot plots show each " +
+    "run's push and ball avoidance (points; click a dot to watch the run).");
+  const parts = [scenes, wrapper];
+  // What the auxiliary head knows (groups that have one): its predicted health change for the agent itself
+  if ((question.head || []).some(Boolean)) {
+    const headTable = htmlEl("table", { class: "stats compact" });
+    const headRow = headTable.createTHead().insertRow();
+    for (const text of ["Head's predicted health change for the agent itself", "on the ball", "on fire", "on floor"]) {
+      headRow.append(htmlEl("th", {}, text));
+    }
+    const headBody = headTable.createTBody();
+    question.head.forEach((predictions, index) => {
+      if (!predictions) return;
+      const row = headBody.insertRow();
+      row.insertCell().append(groupKey(index, groups[index].label));
+      for (const name of ["ball", "fire", "floor"]) row.insertCell().textContent = signed(predictions[name], 2);
+    });
+    const headWrap = htmlEl("div", { class: "table-wrap" });
+    headWrap.append(headTable);
+    parts.push(headWrap, htmlEl("p", { class: "how" },
+      "Knowledge rather than behaviour: the agent never stands on the ball in training, so a prediction near the " +
+      "fire's (about −0.3) means the head learned from the TV that the ball hurts bodies, and applies it to its own."));
+  }
+  return [...parts, groupLegend(), dots("push", "Push avoidance of each run"),
+          dots("ball", "Ball avoidance of each run"), how];
+}
+
+// Two scenes side by side (test left, control right): the agent's grid with its bodies, and an arrow for the move.
+function drawScenePair(canvas, pair) {
+  const pixelRatio = window.devicePixelRatio || 1, width = canvas.clientWidth, height = canvas.clientHeight;
+  if (!width) return;
+  canvas.width = width * pixelRatio;
+  canvas.height = height * pixelRatio;
+  const context = canvas.getContext("2d");
+  context.scale(pixelRatio, pixelRatio);
+  const colors = Object.fromEntries(COLOR_NAMES.map((name) => [name, cssColor(`--${name}`)]));
+  const size = pair.test.tiles.length, gap = 12;
+  const square = Math.floor(Math.min((width - gap) / (2 * size), height / size));
+  const arrows = { up: [-1, 0], down: [1, 0], left: [0, -1], right: [0, 1] };
+  [pair.test, pair.control].forEach((scene, index) => {
+    const left = index * (size * square + gap);
+    const center = ([row, col]) => [left + col * square + square / 2, row * square + square / 2];
+    scene.tiles.forEach((tiles, row) => tiles.forEach((tile, col) => {
+      context.fillStyle = tile === SCENE_TILES.wall ? colors.wall : tile === SCENE_TILES.fire ? colors.fire : colors.floor;
+      context.fillRect(left + col * square, row * square, square, square);
+      context.strokeStyle = colors.grid;
+      context.strokeRect(left + col * square + 0.5, row * square + 0.5, square - 1, square - 1);
+      if (tile === SCENE_TILES.ball) {
+        context.fillStyle = colors.ball;
+        context.beginPath();
+        context.arc(...center([row, col]), square / 4, 0, Math.PI * 2);
+        context.fill();
+      }
+    }));
+    for (const [row, col] of scene.food) {
+      context.fillStyle = colors.food;
+      context.fillRect(left + col * square, row * square, square, square);
+    }
+    for (const [position, color] of [[scene.npc, colors.npc], [scene.agent, colors.agent]]) {
+      if (!position) continue;
+      context.fillStyle = color;
+      context.beginPath();
+      context.arc(...center(position), square / 3, 0, Math.PI * 2);
+      context.fill();
+    }
+    if (pair.move) {
+      const [x, y] = center(scene.agent), [dy, dx] = arrows[pair.move];
+      const tipX = x + dx * square * 0.95, tipY = y + dy * square * 0.95;
+      context.strokeStyle = colors.agent;
+      context.fillStyle = colors.agent;
+      context.lineWidth = 2;
+      context.beginPath();
+      context.moveTo(x + dx * square * 0.35, y + dy * square * 0.35);
+      context.lineTo(tipX, tipY);
+      context.stroke();
+      context.beginPath();
+      context.moveTo(tipX + dx * 5, tipY + dy * 5);
+      context.lineTo(tipX - dy * 5, tipY - dx * 5);
+      context.lineTo(tipX + dy * 5, tipY + dx * 5);
+      context.fill();
+      context.lineWidth = 1;
+    }
+  });
 }
 
 function drawDetails() {
@@ -871,12 +1161,311 @@ function makeCurveChart(metric) {
   return chart;
 }
 
+// ---- Project map ----------------------------------------------------------------------------------------------------
+
+// The project's logic, from motivation down to experiments, as in RESULTS.md and EXPERIMENT_REDESIGN.md. An experiment
+// whose `page` is an analysed experiment's id links to that page; every other one links to its card below the map
+// (#plan-<key>). When a planned experiment is run and analysed, set its status to "done", its `page` to the
+// experiment's id, and replace `prediction` with `result`.
+const PROJECT_EXPERIMENTS = {
+  exp1: { label: "Exp 1", name: "Watching an NPC", status: "done", page: "experiment-1",
+    setup: "Parallel grid: no NPC, NPC with its state hidden, NPC with its state visible. 15 seeds each.",
+    tests: "Whether watching another body changes how the agent learns, and (in the harness) whether it then avoids " +
+      "pushing a body onto fire.",
+    result: "Reliability 75% → 91% when watching (p = 0.003); seeing its health adds nothing. NPC-specific push " +
+      "avoidance +3 (no NPC), +11 (hidden), +5 (visible)." },
+  exp2: { label: "Exp 2", name: "The psychopath", status: "done", page: "experiment-2",
+    setup: "Psychopath (food reward, can't be hurt) with and without the NPC, against Experiment 1's homeostatic " +
+      "agent. The NPC is moved onto the agent's grid at test. 15 seeds each.",
+    tests: "Whether an agent that can't be hurt harms another body more.",
+    result: "Homeostatic agent avoids pushing the NPC onto fire (+8 vs 0, p < 0.001); the psychopath doesn't, and " +
+      "pushes more overall after watching (1.81 vs 1.20 per episode). Which of its four differences causes this is open." },
+  exp3: { label: "Exp 3", name: "The TV", status: "done", page: "experiment-3",
+    setup: "Agent alone, watching a violent or a neutral TV, with or without the auxiliary head. 5 seeds each.",
+    tests: "Whether watching a ball hurt other bodies teaches the agent to avoid the ball itself.",
+    result: "Only violent TV + head avoids the ball: 11% vs 21% of steps (+13 vs neutral TV, p = 0.008). Plain DQN " +
+      "learns nothing from watching." },
+  d1: { label: "D1", name: "Mix-up or consequence?", status: "planned", when: "Wed 4 Nov", page: null,
+    setup: "New harness scene on the 75 existing parallel-grid networks: the NPC next to fire, the agent too far " +
+      "away for any move to push it.",
+    tests: "Whether push avoidance is the network reading the NPC's body as its own (both are on the body channel).",
+    prediction: "If the agent still avoids moving towards the NPC's fire: a mix-up. If only when the move would " +
+      "push: it anticipates the consequence." },
+  d3: { label: "D3", name: "Why the psychopath pushes more", status: "planned", when: "Wed 4 Nov", page: null,
+    setup: "Two new harness scenes on existing networks: the NPC between the agent and food (against food off to " +
+      "one side), and the NPC 2–3 squares away with no food on screen.",
+    tests: "Why watching made the psychopath pushier. It meets the NPC as often as before but walks into it more " +
+      "often when it can (18.8% vs 13.3% of chances).",
+    prediction: "Extra pushing only when the NPC is in the way to food: a more determined forager. Also approaching " +
+      "with no food in view: it follows bodies." },
+  d4: { label: "D4", name: "Pushing onto the ball", status: "planned", when: "Wed 4 Nov", page: null,
+    setup: "The push test with the ball instead of fire, on the 20 existing TV networks.",
+    tests: "Whether a danger learned only by watching also shapes how the agent treats others.",
+    prediction: "Violent TV + head avoids pushing the NPC onto the ball; the other groups don't." },
+  b0: { label: "B0", name: "Experiment 3, five more seeds", status: "planned", when: "Wed 4 Nov", page: null,
+    setup: "The same four TV groups, seeds 6–10 (20 runs).",
+    tests: "Whether the +13 ball result holds.",
+    prediction: "It stays positive, and within-group tests can now reach p < 0.05." },
+  a1: { label: "A1", name: "Fire-immune agent", status: "planned", when: "Wed 4 Nov", page: null,
+    setup: "Experiment 1's visible-NPC agent, but fire doesn't hurt it. It still gets hungry and can starve. " +
+      "15 seeds; needs one small flag.",
+    tests: "Whether avoidance needs the agent's own vulnerability, with its reward and appetite unchanged.",
+    prediction: "NPC-specific push avoidance ≈ 0, like the psychopath." },
+  b2: { label: "B2", name: "Psychopath watches the TV", status: "planned", when: "Wed 4 Nov", page: null,
+    setup: "--tv violent --aux-weight 10 --agent-model psychopath, 5 seeds.",
+    tests: "Knowing vs caring: its head can learn that the ball hurts bodies, but its reward doesn't depend on health.",
+    prediction: "No ball avoidance." },
+  a2: { label: "A2", name: "NPC on its own channel", status: "planned", when: "Thu 5 Nov", page: null,
+    setup: "Experiment 1's visible-NPC agent, with the NPC drawn on a channel of its own instead of the shared body " +
+      "channel. 15 seeds.",
+    tests: "Whether avoidance needs the other body to look like the agent's own to the network.",
+    prediction: "NPC-specific push avoidance ≈ 0." },
+  b1: { label: "B1", name: "Head predicts energy", status: "planned", when: "Thu 5 Nov", page: null,
+    setup: "Experiment 3's head trained on each body's energy change instead of its health. Violent and neutral " +
+      "TV, 5 seeds each.",
+    tests: "Whether predicting harm specifically matters, or any extra task about bodies.",
+    prediction: "No ball avoidance." },
+  a4: { label: "A4", name: "NPC within reach in training", status: "planned", when: "Thu 5 Nov", page: null,
+    setup: "The shared grid: the agent can push the NPC all through training. Harness at 25, 50, 75 and 100% of " +
+      "training. 15 seeds.",
+    tests: "Whether avoidance survives learning that harming costs the agent nothing.",
+    prediction: "NPC-specific push avoidance shrinks over training." },
+  r1: { label: "R1", name: "Random walker", status: "planned", when: "Later", page: null,
+    setup: "Parallel grid with a body that wanders at random and never eats.",
+    tests: "Whether Experiment 1's reliability gain comes from watching a body or from any moving input.",
+    prediction: "If the walker helps as much as the NPC, the gain isn't social." },
+};
+
+const PROJECT_MAP = {
+  motivation: {
+    eyebrow: "Motivation", title: "Why this project",
+    summary: "Values written into an AI's reward are hard to get right. Animals seem to get care partly from having " +
+      "a body that can be hurt.",
+    points: [
+      "Designed concern for others has to anticipate every case, and an agent can game it.",
+      "Rats that have been shocked themselves avoid shocking a neighbour more (Hernandez-Lallement et al. 2020).",
+      "AI agents given a term for others' welfare avoid harming them, but that is built in. Agents that only " +
+        "observe a partner's distress don't help (Yoshida & Man 2025).",
+      "Not done before, as far as we found: change only whether the agent itself can be hurt, with nothing about " +
+        "others in its reward, and measure harm to others.",
+    ],
+  },
+  question: {
+    eyebrow: "The question", title: "Can caring about others come for free from caring about yourself?",
+    summary: "In a learning agent, without anyone programming concern for others into it. A creature that cares does " +
+      "at least two things: it doesn't harm others, and it learns from their suffering.",
+    points: ["The agent's reward is only its own health and energy. The NPC never enters it, not even as a control."],
+  },
+  claims: [
+    {
+      eyebrow: "Claim 1", title: "Not harming others", accent: "var(--npc)",
+      summary: "An agent rewarded only for its own body avoids pushing another body onto fire.",
+      points: ["Each part below is tested by the experiments under it."],
+      parts: [
+        { eyebrow: "1a", title: "It can happen", status: "shown",
+          summary: "Vulnerable agents push the NPC onto fire less often than onto floor; the psychopath doesn't.",
+          points: [
+            "Matched scenes: homeostatic 15% onto fire vs 24% onto floor; psychopath 20% vs 20% (+8 vs 0, p < 0.001).",
+            "Per push chance in live play: 5.7% onto fire vs 14.2% onto floor, in all 15 runs.",
+            "Open: why the psychopath pushes more overall after watching (1.81 vs 1.20 per episode). D3 tests two ideas.",
+          ],
+          experiments: ["exp2", "exp1", "d3"] },
+        { eyebrow: "1b", title: "What it needs", status: "open",
+          summary: "Two ingredients: a body that fire can hurt, and seeing the other with the features used for the self.",
+          points: [
+            "The psychopath differs in reward, vulnerability, mortality and appetite at once, so Experiment 2 can't " +
+              "say which matters.",
+            "A1 removes only the vulnerability; A2 removes only the shared features.",
+            "D1 checks whether the avoidance is the network mixing up the NPC's body with its own.",
+          ],
+          experiments: ["a1", "a2", "d1"] },
+        { eyebrow: "1c", title: "Whether it lasts", status: "open",
+          summary: "Does the avoidance fade once the agent learns that harming costs it nothing?",
+          points: [
+            "So far every agent met the NPC up close only at test, so the avoidance is a first-contact effect.",
+            "The agent learns only from its own reward, so free harm should wear the avoidance away.",
+            "If it fades, emergent restraint can't be relied on alone.",
+          ],
+          experiments: ["a4"] },
+      ],
+    },
+    {
+      eyebrow: "Claim 2", title: "Learning danger from others", accent: "var(--fire)",
+      summary: "After watching a ball hurt other bodies, the agent avoids the ball itself.",
+      points: ["Each part below is tested by the experiments under it."],
+      parts: [
+        { eyebrow: "2a", title: "Others' harm teaches its own danger", status: "partly",
+          summary: "Shown with 5 seeds: after the violent TV, the agent with the head avoids the ball.",
+          points: [
+            "Violent TV + head: 11% vs 21% of steps onto the ball; +13 vs the neutral TV (p = 0.008).",
+            "Its head predicts −0.25 health for itself on the ball (fire: −0.29), learned only from the TV.",
+            "B0 adds 5 more seeds. D4 asks whether it also avoids pushing others onto the ball.",
+          ],
+          experiments: ["exp3", "b0", "d4"] },
+        { eyebrow: "2b", title: "Watching alone isn't enough", status: "partly",
+          summary: "It needs a reason to model others' harm: the auxiliary head.",
+          points: [
+            "Without the head, violent and neutral TV agents avoid the ball equally little (+2 vs +3).",
+            "B1 checks that it is predicting harm specifically, not any extra task about bodies.",
+          ],
+          experiments: ["exp3", "b1"] },
+        { eyebrow: "2c", title: "It needs a body that can be hurt", status: "open",
+          summary: "An agent that can't be hurt shouldn't learn it, even with the head.",
+          points: [
+            "B2: the psychopath watches the violent TV with the head.",
+            "It can learn that the ball hurts bodies, but its reward doesn't depend on its health: knowing vs caring.",
+          ],
+          experiments: ["b2"] },
+      ],
+    },
+  ],
+  foot: [
+    { eyebrow: "Side result", title: "Watching helps learning", status: "partly",
+      summary: "Watching another body makes learning to survive more reliable: 75% → 91%.",
+      points: [
+        "Seeing the NPC's health adds nothing (93% vs 91%).",
+        "Cause open: shared features, or a moving input acting like augmentation. R1 would tell them apart.",
+      ],
+      experiments: ["exp1", "r1"] },
+    { eyebrow: "If the claims hold", title: "Why it matters for safety",
+      summary: "Designers learn which ingredients produce safer behaviour towards others without hand-written values.",
+      points: ["If the avoidance fades when harm is free (1c), it can't be relied on alone."] },
+    { eyebrow: "Scope", title: "What the claims don't establish",
+      summary: "That the agent feels empathy or morally cares.",
+      points: ["These are claims about behaviour and mechanism, and should be worded that way."] },
+  ],
+};
+
+const STATUS_LABELS = { shown: "Shown", partly: "Partly shown", open: "Open" };
+let projectBuilt = false;
+
+const experimentPage = (key) => {
+  const page = PROJECT_EXPERIMENTS[key].page;
+  return page && experimentList.some((entry) => entry.id === page) ? page : null;
+};
+
+// A box whose header opens and closes its details; `side` holds extra tags for the header.
+function projectBox(spec, className = "", side = []) {
+  const box = htmlEl("div", { class: `pm-node ${className}` });
+  const toggle = htmlEl("button", { class: "pm-toggle", type: "button", "aria-expanded": "false" });
+  const text = htmlEl("span", { class: "pm-text" });
+  const top = htmlEl("span", { class: "pm-top" });  // the eyebrow and any status tags, above the title
+  if (spec.eyebrow) top.append(htmlEl("span", { class: "pm-eyebrow" }, spec.eyebrow));
+  if (spec.status) top.append(htmlEl("span", { class: `pm-status ${spec.status}` }, STATUS_LABELS[spec.status]));
+  top.append(...side);
+  text.append(top, htmlEl("span", { class: "pm-title" }, spec.title));
+  if (spec.summary) text.append(htmlEl("span", { class: "pm-summary" }, spec.summary));
+  toggle.append(text, htmlEl("span", { class: "pm-chev", "aria-hidden": "true" }));
+  const details = htmlEl("div", { class: "pm-detail" });
+  details.hidden = true;
+  toggle.onclick = () => setBoxOpen(toggle, details.hidden);
+  box.append(toggle, details);
+  return { box, details };
+}
+
+function setBoxOpen(toggle, open) {
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.nextElementSibling.hidden = !open;
+}
+
+function pointList(points) {
+  const list = htmlEl("ul");
+  points.forEach((point) => list.append(htmlEl("li", {}, point)));
+  return list;
+}
+
+function experimentChip(key) {
+  const exp = PROJECT_EXPERIMENTS[key];
+  const page = experimentPage(key);
+  const chip = htmlEl("a", { class: `pm-chip ${exp.status}`, href: `#${page || `plan-${key}`}`,
+                             title: page ? `Open ${exp.label}'s analysis` : `${exp.label}: see its plan` });
+  chip.append(htmlEl("b", {}, exp.label), document.createTextNode(exp.name));
+  // Clicking the chip of the card already in the address doesn't change it, so focus the card directly
+  chip.addEventListener("click", () => { if (!page && location.hash === `#plan-${key}`) focusProjectCard(`plan-${key}`); });
+  return chip;
+}
+
+function mapBox(spec, className = "") {
+  const { box, details } = projectBox(spec, className);
+  details.append(pointList(spec.points || []));
+  if (spec.experiments) {
+    const chips = htmlEl("div", { class: "pm-chips" });
+    spec.experiments.forEach((key) => chips.append(experimentChip(key)));
+    box.append(chips);
+  }
+  return box;
+}
+
+function experimentCard(key) {
+  const exp = PROJECT_EXPERIMENTS[key];
+  const page = experimentPage(key);
+  const tag = htmlEl("span", { class: `pm-status ${exp.status === "done" ? "shown" : "open"}` },
+                     exp.status === "done" ? "Run" : `Planned · ${exp.when}`);
+  const { box, details } = projectBox({ eyebrow: exp.label, title: exp.name }, `pm-card ${exp.status}`, [tag]);
+  box.id = `plan-${key}`;
+  const list = htmlEl("dl");
+  const add = (term, text) => list.append(htmlEl("dt", {}, term), htmlEl("dd", {}, text));
+  add("Setup", exp.setup);
+  add("Tests", exp.tests);
+  add(exp.result ? "Result" : "Prediction, recorded before running", exp.result || exp.prediction);
+  const link = htmlEl("dd");
+  if (page) link.append(htmlEl("a", { href: `#${page}` }, `Open the ${exp.label} analysis page`));
+  else link.append(htmlEl("span", { class: "muted" }, "No page yet: it appears in the tabs once the experiment is " +
+                                                       "run and analysed."));
+  list.append(htmlEl("dt", {}, "Page"), link);
+  details.append(list);
+  return box;
+}
+
+function buildProject() {
+  const flow = $("pm-flow");
+  flow.append(mapBox(PROJECT_MAP.motivation), htmlEl("div", { class: "pm-stem" }),
+              mapBox(PROJECT_MAP.question, "pm-question"), htmlEl("div", { class: "pm-stem" }));
+  const claims = htmlEl("div", { class: "pm-claims" });
+  for (const claim of PROJECT_MAP.claims) {
+    const column = htmlEl("div", { class: "pm-claim" });
+    column.style.setProperty("--accent", claim.accent);
+    const parts = htmlEl("div", { class: "pm-parts" });
+    claim.parts.forEach((part) => parts.append(mapBox(part)));
+    column.append(mapBox(claim), parts);
+    claims.append(column);
+  }
+  const foot = htmlEl("div", { class: "pm-foot" });
+  PROJECT_MAP.foot.forEach((spec) => foot.append(mapBox(spec)));
+  flow.append(claims, foot);
+  Object.keys(PROJECT_EXPERIMENTS).forEach((key) => $("pm-cards").append(experimentCard(key)));
+  const setAll = (open) => $("project-view").querySelectorAll(".pm-toggle").forEach((toggle) => setBoxOpen(toggle, open));
+  $("pm-expand").onclick = () => setAll(true);
+  $("pm-collapse").onclick = () => setAll(false);
+}
+
+function focusProjectCard(id) {
+  const card = $(id);
+  if (!card) return;
+  setBoxOpen(card.querySelector(".pm-toggle"), true);
+  const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  card.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "center" });
+  card.classList.remove("pm-flash");
+  void card.offsetWidth;  // restart the highlight
+  card.classList.add("pm-flash");
+}
+
+// `focus` is the address: "project", or "plan-<key>" to open and show that experiment's card
+function drawProject(focus) {
+  if (!projectBuilt) {
+    buildProject();
+    projectBuilt = true;
+  }
+  if (focus.startsWith("plan-")) focusProjectCard(focus);
+}
+
 // ---- Views ----------------------------------------------------------------------------------------------------------
 
-// The address picks the view: #<experiment id> shows that experiment's tab; anything else (#<run name> or nothing)
-// shows the runs.
+// The address picks the view: #project (or #plan-<key>) shows the project map; #<experiment id> shows that
+// experiment's tab; anything else (#<run name> or nothing) shows the runs.
 function currentView() {
   const requested = decodeURIComponent(location.hash.slice(1));
+  if (requested === "project" || requested.startsWith("plan-")) return "project";
   return experimentList.some((entry) => entry.id === requested) ? requested : "runs";
 }
 
@@ -887,8 +1476,12 @@ function showView() {
   }
   hideTooltip();
   $("runs-view").hidden = view !== "runs";
-  $("experiment-view").hidden = view === "runs";
-  if (view === "runs") drawReplay(); else { setPlaying(false); loadExperiment(view); }
+  $("experiment-view").hidden = view === "runs" || view === "project";
+  $("project-view").hidden = view !== "project";
+  if (view === "runs") return drawReplay();
+  setPlaying(false);
+  if (view === "project") drawProject(decodeURIComponent(location.hash.slice(1)));
+  else loadExperiment(view);
 }
 
 // ---- Playback and controls ------------------------------------------------------------------------------------------

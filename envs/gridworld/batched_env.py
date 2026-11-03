@@ -5,7 +5,8 @@ inside `step`, and the pre-reset observation is reported in `infos["final_observ
 
 `infos["dropped"]` flags transitions the agent must not store: with `drop_npc_harm`, any step that leaves the NPC on
 a harmful tile. Those envs restart their episode, so the
-agent never sees what follows either (e.g. the NPC's lowered health).
+agent never sees what follows either (e.g. the NPC's lowered health). `infos["harm"]` is each body's health change on
+the step, at its square in the next observation (episode.harm_map), for the auxiliary head.
 
 Each env is one Episode (episode.py), in the shared-grid or parallel-grid setting. The per-env logic is plain numpy
 (dynamics.py); this wrapper just loops over envs. On a 7x7 grid each step takes
@@ -20,7 +21,7 @@ from common import device as default_device
 from envs.gpu_env import GPUEnv, track_episode_stats
 from envs.gridworld.config import GridworldConfig
 from envs.gridworld.dynamics import Action
-from envs.gridworld.episode import Episode, new_episode, observation_shape, observe_episode, step_episode
+from envs.gridworld.episode import Episode, harm_map, new_episode, observation_shape, observe_episode, step_episode
 from envs.gridworld.npc_policy import NpcPolicy, scripted_npc_policy
 
 
@@ -65,6 +66,7 @@ class BatchedGridworldEnv(GPUEnv):
         npc_pushed_onto_hazard = np.zeros(self.num_envs, dtype=bool)
         npc_died = np.zeros(self.num_envs, dtype=bool)
         final_obs = np.zeros((self.num_envs, *self.single_observation_space.shape), dtype=np.float32)
+        harm = np.zeros((self.num_envs, *self.single_observation_space.shape[1:]), dtype=np.float32)
 
         for env_index, (episode, rng) in enumerate(zip(self.episodes, self.rngs)):
             next_episode, result = step_episode(episode, Action(actions[env_index]), self.config, rng, self.npc_policy)
@@ -73,6 +75,7 @@ class BatchedGridworldEnv(GPUEnv):
             npc_pushed[env_index], npc_died[env_index] = result.npc_pushed, result.npc_died
             npc_pushed_onto_hazard[env_index] = result.npc_pushed_onto_hazard
             final_obs[env_index] = observe_episode(next_episode, self.config)
+            harm[env_index] = harm_map(episode, next_episode, self.config)
             if self.config.drop_npc_harm and result.npc_on_hazard:
                 # The transition isn't stored (DQNAgent.play_step skips it) and the episode restarts
                 dropped[env_index] = True
@@ -94,6 +97,7 @@ class BatchedGridworldEnv(GPUEnv):
             "npc_pushed": to_tensor(npc_pushed),
             "npc_pushed_onto_hazard": to_tensor(npc_pushed_onto_hazard),
             "npc_died": to_tensor(npc_died),
+            "harm": to_tensor(harm),
         }
         infos.update(track_episode_stats(self, rewards_t, terminated_t, truncated_t))
         return self._observations(), rewards_t, terminated_t, truncated_t, infos

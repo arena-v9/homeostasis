@@ -13,6 +13,8 @@ evaluation, next to the evaluation results (whose survival rate is ARENA's "how 
                          that kills the agent is rewarded reward_scale * (D(s) - D_max) whatever the action, so that's
                          the true value. A rising error means the network has started treating doomed states as
                          survivable. Not logged for the psychopath, which can't die.
+  harm_loss              With the auxiliary head only: its loss (DQNTrainer.harm_loss) on a large buffer sample, how
+                         well the network predicts every body's health change.
 
 The fixed state sets are built once per run from a fixed seed, and the buffer is sampled with the diagnostics' own
 random generator, so logging them doesn't change training.
@@ -38,6 +40,7 @@ LABELS = {
     "action_gap": "Action gap (max Q − min Q) on random-play states",
     "doomed_q_error": "Doomed states: max Q minus true value",
 }
+HARM_LABEL = f"Auxiliary head: loss on {TD_LOSS_SAMPLES:,} buffer transitions"
 
 
 @dataclass
@@ -49,9 +52,13 @@ class Probes:
     doomed_true_q: t.Tensor | None  # (NUM_PROBE_STATES,): the reward of dying from each doomed state
 
 
-def labels(config: GridworldConfig) -> dict[str, str]:
-    """The diagnostics logged for `config`: all of LABELS, except doomed states for an agent that can't die."""
-    return {name: label for name, label in LABELS.items() if config.agent_vulnerable or name != "doomed_q_error"}
+def labels(config: GridworldConfig, aux_weight: float) -> dict[str, str]:
+    """
+    The diagnostics logged: LABELS, except doomed states for an agent that can't die, and the auxiliary head's loss
+    if there is one (`aux_weight` > 0).
+    """
+    names = {name: label for name, label in LABELS.items() if config.agent_vulnerable or name != "doomed_q_error"}
+    return {**names, "harm_loss": HARM_LABEL} if aux_weight > 0 else names
 
 
 def build_probes(config: GridworldConfig, device: t.device, seed: int = PROBE_SEED) -> Probes:
@@ -107,7 +114,7 @@ def _remove_food_within_reach(state: GridworldState) -> None:
 
 @t.inference_mode()
 def diagnose(trainer, probes: Probes, generator: t.Generator) -> dict[str, float]:
-    """The diagnostics in `labels(config)`, for the trainer's current Q-network and replay buffer."""
+    """The diagnostics in `labels(config, aux_weight)`, for the trainer's current Q-network and replay buffer."""
     sample = trainer.buffer.sample(TD_LOSS_SAMPLES, generator)
     td_loss = trainer.td_loss(sample)
     q_values = trainer.q_network(probes.random_play_obs)
@@ -119,4 +126,6 @@ def diagnose(trainer, probes: Probes, generator: t.Generator) -> dict[str, float
     if probes.doomed_obs is not None:
         doomed_max_q = trainer.q_network(probes.doomed_obs).max(-1).values
         results["doomed_q_error"] = (doomed_max_q - probes.doomed_true_q).mean().item()
+    if trainer.args.aux_weight > 0:
+        results["harm_loss"] = trainer.harm_loss(sample).item()
     return results

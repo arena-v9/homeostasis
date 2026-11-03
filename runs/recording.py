@@ -14,12 +14,16 @@ The layout:
         seed, outcome ("survived" or "died"), return, fire_steps, food_eaten, pushes, npc_fire_steps
         npc_died_at           the step the NPC died, or null if it was alive when the episode ended (or not on the map)
         tiles                 the map, rows of tile numbers
-        npc_tiles             the NPC's own map, in the parallel-grid setting (absent otherwise)
+        npc_tiles             the second map to the right of the agent's: the NPC's own map in the parallel-grid
+                              setting, the TV clip's map in the TV setting (absent otherwise)
+        tv                    true in the TV setting
         frames[]              one per step, starting with the initial state
           agent, npc          {"pos": [row, col], "health", "energy"}; npc is null when there is no living NPC. In the
-                              parallel-grid setting the NPC's position is on its own map
+                              parallel-grid setting the NPC's position is on its own map; in the TV setting npc is
+                              the TV's victim
+          pusher              the TV's pusher, in the TV setting (null once it has died)
           food                [row, col] of each food item
-          npc_food            food on the NPC's own map, in the parallel-grid setting
+          npc_food            food on the second map
           action, reward      what the agent did from this state and the reward it got (absent on the last frame)
 
 `record_episodes` runs single episodes (envs.gridworld.episode) directly, so it records the true states, including
@@ -33,7 +37,7 @@ import torch as t
 
 from envs.gridworld.config import GridworldConfig, Tile
 from envs.gridworld.dynamics import Action
-from envs.gridworld.episode import Episode, new_episode, observe_episode, step_episode
+from envs.gridworld.episode import Episode, new_episode, observe_episode, second_grid, step_episode
 from envs.gridworld.npc_policy import NpcPolicy, scripted_npc_policy
 from envs.gridworld.state import Body, GridworldState
 
@@ -51,14 +55,17 @@ def _food(state: GridworldState) -> list[list[int]]:
 
 
 def _frame(episode: Episode) -> dict:
-    npc_home = episode.npc_world or episode.state  # where the NPC lives
+    second = second_grid(episode)
+    npc_home = second or episode.state  # where the NPC (or the TV's victim) lives
     frame = {
         "agent": _body(episode.state.agent),
         "npc": _body(npc_home.npc) if npc_home.npc.alive else None,
         "food": _food(episode.state),
     }
-    if episode.npc_world is not None:
-        frame["npc_food"] = _food(episode.npc_world)
+    if second is not None:
+        frame["npc_food"] = _food(second)
+    if episode.tv is not None:
+        frame["pusher"] = _body(second.agent) if second.agent.alive else None
     return frame
 
 
@@ -94,9 +101,9 @@ def record_episodes(
             fire_steps[index] += int(result.agent_on_hazard)
             pushes[index] += int(result.npc_pushed)
             npc_fire_steps[index] += int(result.npc_on_hazard)
-            if result.npc_died:
-                npc_died_at[index] = result.next_state.steps_taken
             frames[index].append(_frame(next_episode))
+            if frames[index][-2]["npc"] and not frames[index][-1]["npc"]:
+                npc_died_at[index] = len(frames[index]) - 1
             episodes[index] = next_episode
             if result.terminated:
                 outcomes[index] = "died"
@@ -114,7 +121,8 @@ def record_episodes(
             "npc_fire_steps": npc_fire_steps[index],
             "npc_died_at": npc_died_at[index],
             "tiles": episodes[index].state.tiles.tolist(),
-            **({"npc_tiles": episodes[index].npc_world.tiles.tolist()} if episodes[index].npc_world is not None else {}),
+            **({"npc_tiles": second_grid(episodes[index]).tiles.tolist()} if second_grid(episodes[index]) else {}),
+            **({"tv": True} if episodes[index].tv is not None else {}),
             "frames": frames[index],
         }
         for index, seed in enumerate(seeds)

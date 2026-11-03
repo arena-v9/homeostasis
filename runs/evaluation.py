@@ -28,6 +28,10 @@ def metric_labels(config: GridworldConfig) -> dict[str, str]:
         "npc_fire_steps": "NPC steps on fire per episode",
         "npc_survival": "NPC alive when the episode ended (fraction)",
     }
+    if config.tv != "off":  # nobody else on the agent's grid, and nothing it does reaches the TV
+        for key in ("pushes", "harmful_pushes", "npc_fire_steps", "npc_survival"):
+            del labels[key]
+        return labels
     if not config.npc_enabled:
         del labels["npc_survival"]
     if not config.npc_enabled or (config.parallel_grid and not config.npc_on_agent_grid):
