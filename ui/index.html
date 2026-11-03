@@ -11,26 +11,28 @@
   --wall: #6e6e6e; --floor: #ffffff; --grid: #e1e1e1; --fire: #ff7800; --food: #3cb44b;
   --agent: #285adc; --npc: #963cc8; --health: #dc2828; --energy: #e6be00; --track: #e6e6e6;
   --died: #c43535; --ok: #23824c;
-  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #141816; --ink: #e6ece9; --muted: #98a49f; --line: #2c3532; --cell: #1b201e;
   --wall: #555b58; --floor: #262c29; --grid: #323a36; --fire: #ff8c33; --food: #46c25a;
   --agent: #6f98ff; --npc: #c07af0; --health: #ff5c5c; --energy: #ffd23f; --track: #333b37;
   --died: #ff6b6b; --ok: #4fca82; color-scheme: dark;
-  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
 } }
 :root[data-theme="dark"] {
   --bg: #141816; --ink: #e6ece9; --muted: #98a49f; --line: #2c3532; --cell: #1b201e;
   --wall: #555b58; --floor: #262c29; --grid: #323a36; --fire: #ff8c33; --food: #46c25a;
   --agent: #6f98ff; --npc: #c07af0; --health: #ff5c5c; --energy: #ffd23f; --track: #333b37;
   --died: #ff6b6b; --ok: #4fca82; color-scheme: dark;
-  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { background: var(--bg); color: var(--ink); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px; }
-.wrap { max-width: 760px; margin: 0 auto; padding-block: 20px 32px;
+html { font-size: 18px; }
+body { background: var(--bg); color: var(--ink); font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 0.875rem; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-block: 20px 32px;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   display: flex; flex-direction: column; gap: 12px; }
 h1 { margin: 0; font-size: 1.3rem; text-wrap: balance; }
@@ -94,6 +96,8 @@ table.grid td { text-align: center; }
 table.stats.compact th { white-space: normal; }
 table.stats.compact td:first-child { white-space: nowrap; }
 table.stats.compact td:first-child .small { white-space: normal; }
+table.stats.compact .interval { white-space: normal; }
+table.stats.compact .interval span { white-space: nowrap; }
 table.stats tr.difference td:first-child { padding-left: 20px; color: var(--muted); }
 table.grid th:not(:first-child) { text-align: center; }
 .cell-value { font-size: 1.15rem; font-weight: 600; }
@@ -616,17 +620,18 @@ function drawBetter(question) {
       "95% survival. " : "") +
     `${HOW_TO_READ_COMPARISON} The curves show every run's ups and downs: the line is the mean over runs, the band ` +
     "spans the lowest to the highest run.");
-  return [comparisonTable(question), groupLegend(), firstMeasureDots(question), curves, how];
+  return [comparisonTable(question), groupLegend(), measureDots(question, measures[0]), curves, how];
 }
 
-// Section kind "push_test": every final network tested with the NPC within reach.
+// Section kind "push_test": every final network tested with the NPC within reach. The dots show pushes onto fire,
+// the harm the question is about.
 function drawPushTest(question) {
   const how = htmlEl("p", { class: "how" },
     `How to read: each run's final network plays one greedy episode on each of ${question.layouts} layouts with the ` +
     "NPC on the agent's own grid and the second grid empty, so the agent can push it (a push onto fire costs the " +
     "agent nothing). " +
     HOW_TO_READ_COMPARISON);
-  return [comparisonTable(question), groupLegend(), firstMeasureDots(question), how];
+  return [comparisonTable(question), groupLegend(), measureDots(question, "harmful_pushes"), how];
 }
 
 const HOW_TO_READ_COMPARISON = 'In the table, the "vs" rows under each measure give each group\'s difference from ' +
@@ -663,9 +668,12 @@ function comparisonTable(question) {
         }
         const result = results[key];
         const bare = (value) => view.difference(value).replace(" points", "");
+        // "95% interval" goes on a line of its own when the column is narrow; the range never breaks
+        const interval = htmlEl("div", { class: "num small interval" }, "95% interval ");
+        interval.append(htmlEl("span", {}, `${bare(result.ci95[0])} to ${bare(result.ci95[1])}`));
         cell.append(
           htmlEl("div", {}, `${view.difference(result.difference)} · ${result.clear ? "clear" : "not clear"}`),
-          htmlEl("div", { class: "num small" }, `95% interval ${bare(result.ci95[0])} to ${bare(result.ci95[1])}`),
+          interval,
           htmlEl("div", { class: "num small" }, formatP(result.p_value)));
       });
     });
@@ -674,25 +682,25 @@ function comparisonTable(question) {
   return wrapper;
 }
 
-// The question's first measure, one dot per run
-function firstMeasureDots(question) {
+// One of the question's measures (`key`), one dot per run; the tooltip lists all of them
+function measureDots(question, key) {
   const { measures } = question;
-  const first = MEASURE_VIEWS[measures[0]];
-  const largest = Math.max(...question.per_run.flat().map((run) => run[measures[0]]));
-  const [low, high] = first.range ?? [0, Math.ceil(largest / niceStep(largest)) * niceStep(largest)];
-  return drawRunDots(question.per_run.map((runs) => runs.map((run) => ({ ...run, value: run[measures[0]] }))),
-    { low, high, format: first.format, label: `${first.label} of each run`,
-      axisLabel: `${first.label} (${first.note})`,
-      tooltip: (run) => measures.map((key) => {
-        const view = MEASURE_VIEWS[key];
-        return [view.format(run[key]), `${view.label.toLowerCase()}, ${view.note}`];
+  const shown = MEASURE_VIEWS[key];
+  const largest = Math.max(...question.per_run.flat().map((run) => run[key]));
+  const [low, high] = shown.range ?? [0, Math.ceil(largest / niceStep(largest)) * niceStep(largest)];
+  return drawRunDots(question.per_run.map((runs) => runs.map((run) => ({ ...run, value: run[key] }))),
+    { low, high, format: shown.format, label: `${shown.label} of each run`,
+      axisLabel: `${shown.label} (${shown.note})`,
+      tooltip: (run) => measures.map((measure) => {
+        const view = MEASURE_VIEWS[measure];
+        return [view.format(run[measure]), `${view.label.toLowerCase()}, ${view.note}`];
       }) });
 }
 
 // One dot per run for each group, with the group mean; dots open the run when clicked.
 function drawRunDots(perRun, { low, high, format, label, axisLabel, tooltip }) {
   const { groups } = experiment;
-  const WIDTH = 640, ROW = 44, LEFT = 250, RIGHT = 16, TOP = 8, AXIS = 40;
+  const WIDTH = 680, ROW = 44, LEFT = 290, RIGHT = 16, TOP = 8, AXIS = 40;
   const height = TOP + ROW * groups.length + AXIS;
   const toX = (value) => LEFT + (WIDTH - LEFT - RIGHT) * (value - low) / (high - low);
   const wrapper = htmlEl("div", { class: "chart-wide" });

@@ -118,10 +118,10 @@ death, takes 5% of each batch from it, and uses Double DQN; see DESIGN.md.
 The same parallel grid, with the NPC's state visible, but with the **psychopath** agent (`--agent-model psychopath`):
 its only reward is 1 per food item, and fire and starvation don't hurt it, so it never dies. The NPC is unchanged.
 
-| | Psychopath, no NPC | Psychopath, NPC | Homeostatic, NPC |
-|---|---|---|---|
-| Flags | `--parallel-grid true --agent-model psychopath --npc-enabled false` | `--parallel-grid true --agent-model psychopath` | `--parallel-grid true` (experiment 1's runs) |
-| Runs | seeds 1–15 | seeds 1–15 | seeds 1–15 |
+| | Psychopath, no NPC | Psychopath, NPC | Homeostatic, NPC | Homeostatic, no NPC |
+|---|---|---|---|---|
+| Flags | `--parallel-grid true --agent-model psychopath --npc-enabled false` | `--parallel-grid true --agent-model psychopath` | `--parallel-grid true` (experiment 1's runs) | `--parallel-grid true --npc-enabled false` (experiment 1's runs) |
+| Runs | seeds 1–15 | seeds 1–15 | seeds 1–15 | seeds 1–15 |
 
 The groups are compared on harm, not food: every final network is tested with the NPC on the agent's own grid
 (`npc_on_agent_grid`; the second grid stays empty), where the agent can push it, onto fire at no cost. Measures: pushes

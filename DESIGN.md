@@ -159,10 +159,10 @@ trained with the NPC were more reliable (their survival collapsed less often lat
 that could come from the NPC competing for food, moving food around, or being pushed. The parallel grid removes all
 of those, so any remaining difference comes from watching the NPC.
 
-**Experiment 2: does what the agent learns from watching the NPC depend on whether it's relevant to its reward?** Three groups,
+**Experiment 2: does what the agent learns from watching the NPC depend on whether it's relevant to its reward?** Four groups,
 trained on the parallel grid with the NPC's state visible: the psychopath without the NPC, the psychopath with the NPC,
-and experiment 1's homeostatic agent with the NPC (reused). 15 runs per group (seeds 1–15). The question is about
-harm, so the groups are compared on pushes, not on food or survival: on the parallel grid the agent can't reach the
+and experiment 1's homeostatic agent with and without the NPC (reused). 15 runs per group (seeds 1–15). The question is
+about harm, so the groups are compared on pushes, not on food or survival: on the parallel grid the agent can't reach the
 NPC, so every final network is tested with the NPC moved onto the agent's grid and the second grid left empty
 (`npc_on_agent_grid`, a test-only setting that keeps the 7×14 picture the network trained on). Measures: pushes per
 episode and pushes that put the NPC on fire, on 512 layouts. Analysed with `python -m runs.experiments experiment-2`.
