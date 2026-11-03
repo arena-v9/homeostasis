@@ -1184,10 +1184,11 @@ const PROJECT_EXPERIMENTS = {
       "avoidance +3 (no NPC), +11 (hidden), +5 (visible)." },
   exp2: { label: "Exp 2", name: "The psychopath", status: "done", page: "experiment-2",
     setup: "Psychopath (food reward, can't be hurt) with and without the NPC, against Experiment 1's homeostatic " +
-      "agent. The NPC is moved onto the agent's grid at test. 15 seeds each.",
+      "agents with and without it. The NPC is moved onto the agent's grid at test. 15 seeds each.",
     tests: "Whether an agent that can't be hurt harms another body more.",
     result: "Homeostatic agent avoids pushing the NPC onto fire (+8 vs 0, p < 0.001); the psychopath doesn't, and " +
-      "pushes more overall after watching (1.81 vs 1.20 per episode). Which of its four differences causes this is open." },
+      "pushes more overall after watching (1.81 vs 1.20 per episode); watching doesn't change the homeostatic " +
+      "agent's pushes (0.93 vs 1.04). Which of the psychopath's four differences matters is open." },
   exp3: { label: "Exp 3", name: "The TV", status: "done", page: "experiment-3",
     setup: "Agent alone, watching a violent or a neutral TV, with or without the auxiliary head. 5 seeds each.",
     tests: "Whether watching a ball hurt other bodies teaches the agent to avoid the ball itself.",

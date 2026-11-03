@@ -21,7 +21,7 @@ Last updated: 3 November 2026.
 |---|---|---|---|---|
 | Pilot | Does an NPC on the agent's grid change learning? | — | Superseded | More reliable with the NPC, but confounded; not comparable |
 | 1 | Does watching an NPC change how the agent learns? | 45 | Done | Watching makes learning more reliable (75% → 91%); seeing its health adds nothing |
-| 2 | Does an agent that can't be hurt harm more? | 30 + 15 reused | Done | Homeostatic agent avoids pushing the NPC onto fire; psychopath doesn't |
+| 2 | Does an agent that can't be hurt harm more? | 30 + 30 reused | Done | Homeostatic agent avoids pushing the NPC onto fire; psychopath doesn't |
 | 3 | Can the agent learn a danger by watching it on TV? | 20 | Done, 5 seeds | Only with the auxiliary head: avoids the ball (+13 vs neutral TV) |
 | Next | One change at a time (see [EXPERIMENT_REDESIGN.md](EXPERIMENT_REDESIGN.md)) | 80 planned | Planned | Predictions recorded below |
 
@@ -90,18 +90,20 @@ Last updated: 3 November 2026.
   | Psychopath, no NPC | `--parallel-grid true --npc-enabled false --agent-model psychopath` |
   | Psychopath, NPC | `--parallel-grid true --agent-model psychopath` |
   | Homeostatic, NPC | Experiment 1's visible group, reused |
+  | Homeostatic, no NPC | Experiment 1's no-NPC group, reused |
 
 - Test: the NPC is moved onto the agent's grid (`npc_on_agent_grid`), on 512 layouts, plus the harness.
 
 **Results: live push test** (per episode).
 
-| | Psychopath, no NPC | Psychopath, NPC | Homeostatic, NPC |
-|---|---|---|---|
-| Pushes | 1.20 | 1.81 | 1.04 |
-| Pushes onto fire | 0.11 | 0.18 | 0.05 |
+| | Psychopath, no NPC | Psychopath, NPC | Homeostatic, NPC | Homeostatic, no NPC |
+|---|---|---|---|---|
+| Pushes | 1.20 | 1.81 | 1.04 | 0.93 |
+| Pushes onto fire | 0.11 | 0.18 | 0.05 | 0.05 |
 
 - Watching made the psychopath push more: +0.62 pushes (p = 0.002) and +0.07 onto fire (p = 0.004).
 - Homeostatic vs psychopath: −0.77 pushes (p = 0.004) and −0.13 onto fire (p < 0.001).
+- Watching doesn't change the homeostatic agent's pushes: 0.93 without the NPC vs 1.04 with it (p = 0.72), 0.05 onto fire in both.
 
 **Results: per push chance** (a one-off analysis of the live push test; not yet part of `runs/experiments.py`).
 
@@ -117,11 +119,11 @@ The psychopath meets about 1.27× as many push chances, but takes each fire chan
 
 **Results: harness.**
 
-| | Psychopath, no NPC | Psychopath, NPC | Homeostatic, NPC |
-|---|---|---|---|
-| Pushes onto fire vs onto floor | 18% vs 18% | 20% vs 20% | 15% vs 24% |
-| NPC-specific avoidance | 0 | 0 | +5 (10/15) |
-| Own fire (sanity) | 0 | 0 | +18 |
+| | Psychopath, no NPC | Psychopath, NPC | Homeostatic, NPC | Homeostatic, no NPC |
+|---|---|---|---|---|
+| Pushes onto fire vs onto floor | 18% vs 18% | 20% vs 20% | 15% vs 24% | 10% vs 16% |
+| NPC-specific avoidance | 0 | 0 | +5 (10/15) | +3 (9/15) |
+| Own fire (sanity) | 0 | 0 | +18 | +16 |
 
 Homeostatic vs psychopath: push avoidance +8 (95% interval +5 to +13, p < 0.001).
 
