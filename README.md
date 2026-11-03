@@ -86,19 +86,21 @@ Experiments run one at a time. Each must be shown to work before the next one st
 #### Experiment 1: does watching an NPC change how the agent learns to survive? (running)
 
 Before asking whether the agent avoids harming the NPC, check whether the NPC's presence by itself changes how the
-agent learns to look after its own body. Both groups use the **parallel grid**: the agent sees its own grid and, to
-its right, a second grid with its own fire and food that it can never enter.
+agent learns to look after its own body. All three groups use the **parallel grid**: the agent sees its own grid and,
+to its right, a second grid with its own fire and food that it can never enter.
 
-| | No NPC | NPC |
-|---|---|---|
-| Second grid | Empty of bodies | The NPC lives there, moving around and eating |
-| Flags | `--parallel-grid true --npc-enabled false` | `--parallel-grid true --npc-state-visible false` |
-| Runs | seeds 1–15 | seeds 1–15 |
+| | No NPC | NPC, state hidden | NPC, state visible |
+|---|---|---|---|
+| Second grid | Empty of bodies | The NPC lives there, moving around and eating | The same |
+| NPC's health and energy | | Hidden | Drawn on the agent's health and energy channels |
+| Flags | `--parallel-grid true --npc-enabled false` | `--parallel-grid true --npc-state-visible false` | `--parallel-grid true` |
+| Runs | seeds 1–15 | seeds 1–15 | seeds 1–15 |
 
-The agent and the NPC never interact, and the NPC's health and energy are hidden, so the only difference is watching
-the NPC. Logs are in `logs/exp1/`; the analysis is `python -m runs.experiments experiment-1`, shown in the viewer's
-Experiment 1 tab. It asks: does an agent that watches the NPC do better? Is it learning to survive, or does it depend
-on the NPC being there? And why (candidate explanations, not yet tested)?
+The agent and the NPC never interact, and the NPC's state never enters the agent's reward. Each group changes one
+thing from the one before it and is compared with it: watching the NPC, then seeing its health and energy. Logs are
+in `logs/exp1/`; the analysis is `python -m runs.experiments experiment-1`, shown in the viewer's Experiment 1 tab. It
+asks: does watching the NPC help the agent, and does seeing its state help more? Is it learning to survive, or does
+it depend on what it sees of the NPC? And why (candidate explanations, not yet tested)?
 
 **Why the parallel grid.** An earlier version of this experiment put the NPC on the agent's own grid. Agents trained
 with it were more reliable: 86% of their evaluations after 100k steps reached 95% survival, against 62% without the

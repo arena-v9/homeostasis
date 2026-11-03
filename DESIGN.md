@@ -136,20 +136,17 @@ is still open, but their result means a null effect here is a real possibility.
 
 Experiments run one at a time; each must be shown to work before the next starts.
 
-**Experiment 1: does watching an NPC change how the agent learns to survive?** Both groups use the parallel grid.
-In one group an NPC lives on the second grid, moving around and eating; in the other, the second grid is empty. The
-NPC's health and energy are hidden. 15 runs per group, otherwise default settings. Analysed with
-`python -m runs.experiments experiment-1` (questions defined in `runs/experiment_definitions.py`).
+**Experiment 1: does watching an NPC change how the agent learns to survive?** All three groups use the parallel
+grid. In the first, the second grid is empty. In the other two an NPC lives on it, moving around and eating; its
+health and energy are hidden in one and visible in the other, on the same channels as the agent's own. Each group is
+compared with the one before it, so the comparisons are watching the NPC, then seeing its health and energy. The NPC's
+state is only seen, never part of the reward. 15 runs per group (seeds 1–15), otherwise default settings. Analysed
+with `python -m runs.experiments experiment-1` (questions defined in `runs/experiment_definitions.py`).
 
 **Why the parallel grid:** an earlier version of experiment 1, with the NPC on the agent's grid, found that agents
 trained with the NPC were more reliable (their survival collapsed less often late in training). On a shared grid,
 that could come from the NPC competing for food, moving food around, or being pushed. The parallel grid removes all
 of those, so any remaining difference comes from watching the NPC.
-
-**Experiment 2: does seeing the NPC's health and energy change how the agent learns to survive?** Both groups use the
-parallel grid with the NPC. In one group the NPC's health and energy are hidden (experiment 1's NPC group, reused); in
-the other they are visible, on the same channels as the agent's own. 15 runs per group, the same seeds as experiment
-1. The NPC's state is only seen, never part of the reward. Analysed with `python -m runs.experiments experiment-2`.
 
 ## Evaluation (planned)
 

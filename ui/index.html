@@ -93,6 +93,8 @@ details[open] { display: flex; flex-direction: column; gap: 10px; }
 table.grid td { text-align: center; }
 table.stats.compact th { white-space: normal; }
 table.stats.compact td:first-child { white-space: nowrap; }
+table.stats.compact td:first-child .small { white-space: normal; }
+table.stats tr.difference td:first-child { padding-left: 20px; color: var(--muted); }
 table.grid th:not(:first-child) { text-align: center; }
 .cell-value { font-size: 1.15rem; font-weight: 600; }
 .tooltip { position: fixed; z-index: 10; pointer-events: none; background: var(--bg); color: var(--ink);
@@ -179,6 +181,8 @@ table.grid th:not(:first-child) { text-align: center; }
         <li><b>Reliability:</b> the share of a run's evaluations after 100k environment steps (13 of them) with at
           least 95% survival. Deaths by cause are counted over the same evaluations (13 × 64 = 832 episodes per run)
           and given per 1,000 episodes.</li>
+        <li><b>Comparisons:</b> the answers compare each group with the one listed before it, which differs from
+          it in one setting. The table in section 1 also compares each group with every group before it.</li>
         <li><b>95% interval:</b> bootstrap over training runs (20,000 resamples). A difference is called
           <i>clear</i> only when its interval excludes zero and p &lt; 0.05. A clear survival difference under 0.02
           is called <i>negligible</i>.</li>
@@ -561,12 +565,14 @@ function renderExperiment() {
   questions.forEach((question, index) => {
     const section = htmlEl("section", { class: "question" });
     section.append(htmlEl("h3", {}, `${index + 1}. ${question.title}`));
-    // The answer's first sentence is the verdict
-    const split = question.answer.indexOf(". ");
-    const answer = htmlEl("p", { class: "answer" });
-    answer.append(htmlEl("strong", {}, question.answer.slice(0, split + 1)),
-                  document.createTextNode(question.answer.slice(split + 1)));
-    section.append(answer);
+    // One paragraph per change; each paragraph's first sentence is its verdict
+    for (const paragraph of question.answer) {
+      const split = paragraph.indexOf(". ");
+      const answer = htmlEl("p", { class: "answer" });
+      answer.append(htmlEl("strong", {}, paragraph.slice(0, split + 1)),
+                    document.createTextNode(paragraph.slice(split + 1)));
+      section.append(answer);
+    }
     const draw = { better: drawBetter, test_dependence: drawTestDependence,
                    explanations: drawExplanations }[question.kind];
     section.append(...draw(question));
@@ -576,16 +582,16 @@ function renderExperiment() {
   drawDetails();
 }
 
-// Section kind "better": the three measures in a table, reliability per run, and the learning curves behind them.
+// Section kind "better": each group's three measures and each change's difference in a table, reliability per run,
+// and the learning curves behind them.
 function drawBetter(question) {
   const { groups } = experiment;
-  const [base, other] = groups.map((group) => group.phrase);
-  const rows = [
-    ["reliability", "Reliability",
+  const measures = [
+    ["reliability", "Reliability", "share of evaluations at 95% survival or more",
      (value) => `${Math.round(value * 100)}%`, (value) => `${signed(value * 100, 0)} points`],
-    ["deaths_starvation", "Starvation deaths / 1,000", (value) => value.toFixed(0),
+    ["deaths_starvation", "Starvation deaths", "per 1,000 episodes", (value) => value.toFixed(0),
      (value) => signed(value, 0)],
-    ["deaths_fire", "Fire deaths / 1,000", (value) => value.toFixed(1), (value) => signed(value, 1)],
+    ["deaths_fire", "Fire deaths", "per 1,000 episodes", (value) => value.toFixed(1), (value) => signed(value, 1)],
   ];
   const wrapper = htmlEl("div", { class: "table-wrap" });
   const table = htmlEl("table", { class: "stats compact" });
@@ -593,21 +599,33 @@ function drawBetter(question) {
   head.append(htmlEl("th", {}, ""));
   groups.forEach((group, index) => {
     const th = htmlEl("th");
-    th.append(groupKey(index, `Trained ${group.phrase}`));
+    th.append(groupKey(index, group.label));
     head.append(th);
   });
-  head.append(htmlEl("th", {}, "Difference"));
   const body = table.createTBody();
-  for (const [key, label, format, formatDifference] of rows) {
-    const result = question.results[key];
+  for (const [key, label, note, format, formatDifference] of measures) {
     const row = body.insertRow();
-    row.insertCell().textContent = label;
-    row.insertCell().textContent = format(result.a);
-    row.insertCell().textContent = format(result.b);
-    const bare = (value) => formatDifference(value).replace(" points", "");
-    row.insertCell().append(htmlEl("div", {}, `${formatDifference(result.difference)} · ${result.clear ? "clear" : "not clear"}`),
-      htmlEl("div", { class: "num small" },
-             `95% interval ${bare(result.ci95[0])} to ${bare(result.ci95[1])} · ${formatP(result.p_value)}`));
+    row.insertCell().append(htmlEl("div", {}, label), htmlEl("div", { class: "num small" }, note));
+    for (const mean of question.means[key]) row.insertCell().textContent = format(mean);
+    // Under each measure, one row per earlier group: each later group's difference from it, a dash elsewhere
+    groups.slice(0, -1).forEach((earlier, earlierIndex) => {
+      const differenceRow = body.insertRow();
+      differenceRow.className = "difference";
+      differenceRow.insertCell().textContent = `vs ${earlier.label}`;
+      question.differences[earlierIndex].forEach((results) => {
+        const cell = differenceRow.insertCell();
+        if (!results) {
+          cell.append(htmlEl("span", { class: "muted" }, "–"));
+          return;
+        }
+        const result = results[key];
+        const bare = (value) => formatDifference(value).replace(" points", "");
+        cell.append(
+          htmlEl("div", {}, `${formatDifference(result.difference)} · ${result.clear ? "clear" : "not clear"}`),
+          htmlEl("div", { class: "num small" }, `95% interval ${bare(result.ci95[0])} to ${bare(result.ci95[1])}`),
+          htmlEl("div", { class: "num small" }, formatP(result.p_value)));
+      });
+    });
   }
   wrapper.append(table);
 
@@ -625,7 +643,8 @@ function drawBetter(question) {
     `How to read: survival swings late in training, as agents forget and relearn how to stay fed. Reliability ` +
     `counts how often a run is doing well: the share of its ${question.evaluations_per_run} evaluations after ` +
     `100k steps with at least 95% survival. Deaths are counted over the same evaluations ` +
-    `(${question.evaluations_per_run} × 64 test episodes per run). In the dot plot each dot is one run (click to ` +
+    `(${question.evaluations_per_run} × 64 test episodes per run). In the table, the "vs" rows under each measure give ` +
+    `each group's difference from that group. In the dot plot each dot is one run (click to ` +
     "watch it); the black bar is the group's mean. The curves show every run's ups and downs: the line is the " +
     "mean over runs, the band spans the lowest to the highest run.");
   return [wrapper, groupLegend(), dots, curves, how];
@@ -634,7 +653,7 @@ function drawBetter(question) {
 // One dot per run for each group, with the group mean; dots open the run when clicked.
 function drawRunDots(perRun, { low, high, format, label, tooltip }) {
   const { groups } = experiment;
-  const WIDTH = 640, ROW = 44, LEFT = 170, RIGHT = 16, TOP = 8, AXIS = 22;
+  const WIDTH = 640, ROW = 44, LEFT = 215, RIGHT = 16, TOP = 8, AXIS = 22;
   const height = TOP + ROW * groups.length + AXIS;
   const toX = (value) => LEFT + (WIDTH - LEFT - RIGHT) * (value - low) / (high - low);
   const wrapper = htmlEl("div", { class: "chart-wide" });
@@ -694,14 +713,14 @@ function drawExplanations(question) {
 function drawTestDependence(question) {
   const { groups } = experiment;
   const wrapper = htmlEl("div", { class: "table-wrap" });
-  const table = htmlEl("table", { class: "stats grid" });
+  const table = htmlEl("table", { class: "stats grid compact" });
   const head = table.createTHead().insertRow();
   head.append(htmlEl("th", {}, "Survival"));
-  groups.forEach((group) => head.append(htmlEl("th", {}, `Tested ${group.phrase}`)));
+  groups.forEach((group) => head.append(htmlEl("th", {}, `Tested: ${group.label}`)));
   const body = table.createTBody();
   groups.forEach((trained, trainedIndex) => {
     const row = body.insertRow();
-    row.insertCell().append(groupKey(trainedIndex, `Trained ${trained.phrase}`));
+    row.insertCell().append(groupKey(trainedIndex, `Trained: ${trained.label}`));
     groups.forEach((tested, testedIndex) => {
       const cell = question.grid[trainedIndex][testedIndex];
       const td = row.insertCell();
@@ -710,12 +729,12 @@ function drawTestDependence(question) {
     });
   });
   wrapper.append(table);
-  const [base, other] = groups.map((group) => group.phrase);
   const how = htmlEl("p", { class: "how" },
     `How to read: rows are how agents were trained, columns how they were tested (each run's final network on ` +
-    `${question.layouts} layouts; mean ± standard deviation over runs). Along the "trained ${other}" row: does ` +
-    `removing the NPC at test time matter? Down the "tested ${base}" column: with the test identical, does ` +
-    "training with the NPC still help?");
+    `${question.layouts} layouts; mean ± standard deviation over runs). For each change, look at the cell just left ` +
+    `of the changed group's "as trained" cell, where its agents are tested without the change. Against the cell to ` +
+    `its right: does losing the change at test time matter? Against the cell above it, with the test identical: ` +
+    "does training with the change still help?");
   return [wrapper, how];
 }
 
