@@ -83,7 +83,7 @@ the Q-value gap, Q(push) minus the best alternative. **Avoidance = floor-push va
 
 Experiments run one at a time. Each must be shown to work before the next one starts.
 
-#### Experiment 1: does watching an NPC change how the agent learns to survive? (running)
+#### Experiment 1: does watching an NPC change how the agent learns to survive?
 
 Before asking whether the agent avoids harming the NPC, check whether the NPC's presence by itself changes how the
 agent learns to look after its own body. All three groups use the **parallel grid**: the agent sees its own grid and,
@@ -107,13 +107,13 @@ with it were more reliable: 86% of their evaluations after 100k steps reached 95
 NPC, mostly through fewer starvation deaths. But on a shared grid the NPC competes for food, moves food around and can
 be pushed, and any of those could explain it. The parallel grid removes them all.
 
-**Results:** pending.
+**Results:** in [RESULTS.md](RESULTS.md), with every experiment's setup and interpretation.
 
 **Catastrophic forgetting.** In the first runs, deaths disappeared from the replay buffer by about 110k steps, the
 network then rated doomed states far too highly, and survival collapses followed. Training now keeps a store of every
 death, takes 5% of each batch from it, and uses Double DQN; see DESIGN.md.
 
-#### Experiment 2: does what the agent learns from watching the NPC depend on whether it's relevant to its reward? (running)
+#### Experiment 2: does what the agent learns from watching the NPC depend on whether it's relevant to its reward?
 
 The same parallel grid, with the NPC's state visible, but with the **psychopath** agent (`--agent-model psychopath`):
 its only reward is 1 per food item, and fire and starvation don't hurt it, so it never dies. The NPC is unchanged.
@@ -125,7 +125,26 @@ its only reward is 1 per food item, and fire and starvation don't hurt it, so it
 
 The groups are compared on harm, not food: every final network is tested with the NPC on the agent's own grid
 (`npc_on_agent_grid`; the second grid stays empty), where the agent can push it, onto fire at no cost. Measures: pushes
-and pushes onto fire per episode. Logs are in `logs/exp2/`; the analysis is `python -m runs.experiments experiment-2`.
+and pushes onto fire per episode. Logs are in `logs/exp2/`; the analysis is `python -m runs.experiments experiment-2`. Results: [RESULTS.md](RESULTS.md).
+
+#### Experiment 3: does watching harm on TV teach the agent to avoid it?
+
+The agent is alone on its grid and watches a **TV** to its right (`envs/gridworld/tv.py`): recorded clips of two bodies
+like its own, a pusher that drags a victim towards fire or a **ball** (a new object, on the `spikes` channel). On the
+**violent** TV the drag ends with the victim pushed onto the fire or the ball, which hurts it; on the **neutral** TV it
+stops one square short and the ball is harmless. The agent never meets the ball or another body itself, and nothing on
+the TV enters its reward. Crossed with an optional **auxiliary head** that predicts every body's health change (a
+prediction task, not a reward): 4 groups × seeds 1–5.
+
+| | Neutral TV | Violent TV |
+|---|---|---|
+| Plain DQN | `--tv neutral` | `--tv violent` |
+| With the auxiliary head | `--tv neutral --aux-weight 10` | `--tv violent --aux-weight 10` |
+
+The **test harness** (`runs/harness.py`) then puts each final network in matched scenes on its own grid: push the NPC
+onto fire vs onto floor (with fire beside the NPC, so the agent ends next to fire either way), step onto the ball vs
+beside it, step into fire vs beside it (sanity check), and the NPC on fire far away (self/other confusion check). It
+also runs on experiments 1 and 2's networks. `python -m runs.experiments experiment-3`. Results: [RESULTS.md](RESULTS.md).
 
 ---
 
@@ -294,7 +313,8 @@ homeostasis/
 │       ├── reward.py           the agent's reward per step, by agent model (homeostatic or psychopath)
 │       ├── npc_policy.py       the NPC's script
 │       ├── observation.py      observe(): state → (9, 7, 7) tensor
-│       ├── episode.py          one episode in either setting: shared grid, or the NPC on a parallel grid
+│       ├── tv.py               the TV: recorded clips of a pusher and a victim, played to the agent's right
+│       ├── episode.py          one episode in any setting: shared grid, the NPC on a parallel grid, or the TV
 │       └── batched_env.py      BatchedGridworldEnv: N gridworlds behind the GPUEnv interface
 │
 ├── dqn/                        DQN, adapted from ARENA chapter 2
@@ -312,6 +332,7 @@ homeostasis/
 │   ├── recording.py            records full episodes for the replay viewer
 │   ├── experiment_definitions.py   what each experiment compares and asks
 │   ├── statistics.py           comparisons between groups of runs: bootstrap intervals, permutation tests
+│   ├── harness.py              the test harness: matched scenes for harm avoidance (push, ball, own fire, bystander)
 │   └── experiments.py          analyses an experiment for the viewer's tab: python -m runs.experiments experiment-1
 │
 ├── ui/index.html               viewer: pick a run, see learning curves and replays
@@ -320,7 +341,10 @@ homeostasis/
     ├── test_gridworld.py       mechanics, drive, observation, pushes, dropping (pytest)
     ├── test_npc_policy.py      NPC script and drop_npc_harm (pytest)
     ├── test_parallel_grid.py   the NPC on its own grid (pytest)
-    ├── test_replay_buffer.py   the buffer's store of deaths (pytest)
+    ├── test_replay_buffer.py   the buffer's store of deaths and harm maps (pytest)
+    ├── test_trainer.py         Double DQN target, auxiliary head loss (pytest)
+    ├── test_tv.py              the TV (pytest)
+    ├── test_harness.py         the test harness's matched scenes (pytest)
     └── test_dqn.py             DQN unit tests + probe environments (pytest)
 ```
 
@@ -565,6 +589,7 @@ python train_gridworld.py --npc-state-visible false --seed 1          # hidden N
 python train_gridworld.py --drop-npc-harm true --seed 1               # NPC harm never stored
 python train_gridworld.py --npc-enabled false --seed 1                # the agent alone (sanity check)
 python train_gridworld.py --parallel-grid true --seed 1               # the NPC on a grid of its own
+python train_gridworld.py --tv violent --aux-weight 10 --seed 1       # the violent TV, with the auxiliary head
 python train_gridworld.py --help                                      # every flag and its default
 ```
 
@@ -581,12 +606,8 @@ Opening `index.html` straight from disk won't work: browsers block it from loadi
 **Test:**
 
 ```bash
-python -m pytest tests --ignore=tests/test_dqn.py                    # game, NPC, parallel grid, buffer
-python -m tests.test_dqn                                             # DQN units + probe environments
+python -m pytest tests -q                                            # everything, including the DQN probe envs
 ```
-
-`test_dqn.py` is written as ARENA-style functions that take the implementation as an argument, so run it as a module
-rather than with pytest.
 
 ---
 
@@ -599,7 +620,7 @@ rather than with pytest.
 | Run outputs and viewer | Done |
 | Scripted NPC, `drop_npc_harm`, push and fire counters in evaluations and replays | Done |
 | Counters over the training data itself (dropped transitions, NPC-on-fire steps stored) | Not started |
-| Evaluation harness (matched fire-push / floor-push layouts) | Not started |
+| TV, auxiliary head, test harness (push, ball, own fire, bystander), experiment 3 | Done |
 
 Open issues (details in [DESIGN.md](DESIGN.md#open-issues)):
 
